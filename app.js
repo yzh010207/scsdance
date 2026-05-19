@@ -779,11 +779,41 @@ async function openCourseForm(courseId) {
         <textarea id="ce-teacherintro" class="form-input" rows="3" placeholder="教练背景、经历等...">${isNew?'':_esc(c.teacherIntro||'')}</textarea></div>
       <div class="form-group"><label class="form-label">视频链接</label>
         <input id="ce-video" class="form-input" type="url" placeholder="YouTube / Bilibili / 直链 .mp4 URL" value="${isNew?'':_esc(c.videoUrl||'')}"></div>
+      <div class="form-group"><label class="form-label">或上传本地视频</label>
+        <input id="ce-video-file" class="form-input" type="file" accept="video/mp4,video/webm,video/ogg,video/quicktime"
+          onchange="handleVideoUpload(this)">
+        <div id="ce-video-upload-status" style="margin-top:6px;font-size:0.8rem;color:var(--text2)"></div>
+      </div>
       <div id="ce-error" class="error-msg" style="display:none"></div>
       <button class="btn-primary" id="ce-save-btn" onclick="saveCourseForm()">保存</button>
       <button class="btn-outline" style="margin-top:10px;width:100%;display:block" onclick="closeModal('courseedit')">取消</button>
     </div>`;
   openModal('courseedit');
+}
+
+async function handleVideoUpload(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const statusEl = document.getElementById('ce-video-upload-status');
+  const urlEl    = document.getElementById('ce-video');
+  if (statusEl) statusEl.textContent = '上传中…';
+  try {
+    const ext  = file.name.split('.').pop().toLowerCase();
+    const path = `${Date.now()}_${Math.random().toString(36).slice(2,8)}.${ext}`;
+    const r = await fetch(`${SB_URL}/storage/v1/object/course-videos/${path}`, {
+      method: 'POST',
+      headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`, 'Content-Type': file.type, 'x-upsert': 'true' },
+      body: file
+    });
+    if (!r.ok) { const t = await r.text(); throw new Error(t); }
+    const publicUrl = `${SB_URL}/storage/v1/object/public/course-videos/${path}`;
+    if (urlEl)    urlEl.value = publicUrl;
+    if (statusEl) statusEl.textContent = `✓ 上传成功`;
+    input.value = '';
+  } catch(e) {
+    if (statusEl) statusEl.textContent = '上传失败，请检查 Supabase Storage 配置';
+    console.error(e);
+  }
 }
 
 async function saveCourseForm() {
