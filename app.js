@@ -8,6 +8,127 @@ const COURSE_COLORS   = ['#e94560','#4a90e2','#9b59b6','#27ae60','#f39c12','#e67
 const MONTH_EN        = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const WDAY_EN         = { '周日':'Sun','周一':'Mon','周二':'Tue','周三':'Wed','周四':'Thu','周五':'Fri','周六':'Sat' };
 
+// ===== Supabase Config =====
+const SB_URL = 'https://iodfxczhadjoarnobazq.supabase.co';
+const SB_KEY = 'sb_publishable_3SRRf666jucZ8vZPD4KuGg_x_Ng6bOh';
+const REST   = `${SB_URL}/rest/v1`;
+
+const HG = { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` };
+const H  = { ...HG, 'Content-Type': 'application/json', 'Prefer': 'return=representation' };
+
+async function sbGet(path) {
+  const r = await fetch(`${REST}/${path}`, { headers: HG });
+  if (!r.ok) { const t = await r.text(); throw new Error(`GET ${path} → ${r.status}: ${t}`); }
+  return r.json();
+}
+async function sbPost(table, data) {
+  const r = await fetch(`${REST}/${table}`, { method:'POST', headers: H, body: JSON.stringify(data) });
+  if (!r.ok) {
+    const t = await r.text();
+    const err = Object.assign(new Error(`POST ${table} → ${r.status}: ${t}`), { status: r.status, body: t });
+    throw err;
+  }
+  return r.json();
+}
+async function sbPatch(table, filter, data) {
+  const r = await fetch(`${REST}/${table}?${filter}`, { method:'PATCH', headers: H, body: JSON.stringify(data) });
+  if (!r.ok) { const t = await r.text(); throw new Error(`PATCH ${table} → ${r.status}: ${t}`); }
+  return r.json();
+}
+async function sbDelete(table, filter) {
+  const r = await fetch(`${REST}/${table}?${filter}`, { method:'DELETE', headers: HG });
+  if (!r.ok) { const t = await r.text(); throw new Error(`DELETE ${table} → ${r.status}: ${t}`); }
+}
+
+// ===== Row Mappers =====
+function rowToCourse(r) {
+  return {
+    id: r.id, name: r.name, emoji: r.emoji || '🎵', teacher: r.teacher,
+    date: r.date, time: r.time, duration: r.duration || 90,
+    level: r.level, levelClass: r.level_class || 'all',
+    capacity: r.capacity, room: r.room || '', color: r.color || '#8c1a2b',
+    description: r.description || '', requirements: r.requirements || '',
+    teacherIntro: r.teacher_intro || '', videoUrl: r.video_url || '',
+    localVideoData: '', localVideoName: ''
+  };
+}
+function rowToCard(r) {
+  return {
+    id: r.id, userId: r.user_id, phone: r.phone, type: r.type,
+    startDate: r.start_date, endDate: r.end_date,
+    totalCredits: r.total_credits, remainingCredits: r.remaining_credits
+  };
+}
+function rowToUser(r) {
+  return { id: r.id, phone: r.phone, name: r.name || '' };
+}
+function rowToBooking(r) {
+  return {
+    id: r.id, courseId: r.course_id, userId: r.user_id, phone: r.phone,
+    userName: r.user_name || '', status: r.status,
+    cardId: r.card_id, cardType: r.card_type,
+    createdAt: new Date(r.created_at).getTime(),
+    courseName:  r.courses?.name    || '',
+    courseEmoji: r.courses?.emoji   || '',
+    teacher:     r.courses?.teacher || '',
+    date:        r.courses?.date    || '',
+    time:        r.courses?.time    || '',
+    room:        r.courses?.room    || ''
+  };
+}
+
+// ===== Fetch Functions =====
+async function fetchCourses() {
+  const rows = await sbGet('courses?order=date,time');
+  return rows.map(rowToCourse);
+}
+async function fetchCourse(id) {
+  const rows = await sbGet(`courses?id=eq.${id}`);
+  return rows.length ? rowToCourse(rows[0]) : null;
+}
+async function fetchBookedCounts() {
+  const rows = await sbGet('bookings?status=eq.confirmed&select=course_id');
+  const m = {};
+  rows.forEach(r => { m[r.course_id] = (m[r.course_id] || 0) + 1; });
+  return m;
+}
+async function fetchBookedCountForCourse(courseId) {
+  const rows = await sbGet(`bookings?course_id=eq.${courseId}&status=eq.confirmed&select=id`);
+  return rows.length;
+}
+async function fetchUserBookings(userId) {
+  const rows = await sbGet(
+    `bookings?user_id=eq.${userId}&order=created_at.desc` +
+    `&select=*,courses(name,emoji,teacher,date,time,room)`
+  );
+  return rows.map(rowToBooking);
+}
+async function fetchCards() {
+  const rows = await sbGet('course_cards?order=created_at.desc');
+  return rows.map(rowToCard);
+}
+async function fetchCardsByPhone(phone) {
+  const rows = await sbGet(`course_cards?phone=eq.${encodeURIComponent(phone)}&order=created_at.desc`);
+  return rows.map(rowToCard);
+}
+async function fetchValidCardForPhone(phone) {
+  const today = todayIso();
+  const cards = await fetchCardsByPhone(phone);
+  for (const c of cards)
+    if (c.type === 'period' && c.startDate <= today && today <= c.endDate) return c;
+  for (const c of cards)
+    if (c.type === 'credit' && c.remainingCredits > 0) return c;
+  return null;
+}
+async function fetchUsers() {
+  const rows = await sbGet('app_users?order=created_at.desc');
+  return rows.map(rowToUser);
+}
+async function fetchUserByPhone(phone) {
+  const rows = await sbGet(`app_users?phone=eq.${encodeURIComponent(phone)}&limit=1`);
+  return rows.length ? rowToUser(rows[0]) : null;
+}
+
 // ===== Date Helpers =====
 function getWeekday(dateStr) {
   const [y,m,d] = dateStr.split('-').map(Number);
@@ -19,89 +140,50 @@ function fmtCourseDate(dateStr) {
 }
 function todayIso() { return new Date().toISOString().split('T')[0]; }
 function relDate(days) {
-  const d = new Date();
-  d.setDate(d.getDate() + days);
+  const d = new Date(); d.setDate(d.getDate() + days);
   return d.toISOString().split('T')[0];
 }
 
-// ===== Default Courses (relative to today so they are always upcoming) =====
-function buildDefaultCourses() {
-  const tmpl = [
-    { name:'Jazz Funk',     emoji:'💃', teacher:'Alex 老师', da:2,  time:'19:00–20:30', dur:90, level:'初级',  lc:'beginner',     cap:20, room:'舞室 A', color:'#e94560', desc:'Jazz Funk 融合爵士舞与街舞元素，节奏感强，动作帅气。专为初学者设计，从基础律动开始逐步掌握核心技巧。', req:'无舞蹈基础要求，穿着舒适运动服和运动鞋即可' },
-    { name:'Hip Hop',       emoji:'🤸', teacher:'Ray 老师',  da:3,  time:'18:30–20:00', dur:90, level:'中级',  lc:'intermediate', cap:15, room:'舞室 B', color:'#4a90e2', desc:'正宗 Hip Hop 文化与舞蹈，涵盖 Popping、Locking 等多种街舞风格，适合有一定基础的学员。', req:'需有 6 个月以上舞蹈学习经历' },
-    { name:'芭蕾基础',       emoji:'🩰', teacher:'小华 老师', da:4,  time:'10:00–11:30', dur:90, level:'初级',  lc:'beginner',     cap:20, room:'舞室 A', color:'#9b59b6', desc:'经典芭蕾舞基础训练，培养优雅姿态、柔韧性和身体协调能力，适合零基础成人。', req:'无基础要求，需穿芭蕾软鞋（可在场馆购买）' },
-    { name:'当代舞',         emoji:'🎭', teacher:'Ming 老师', da:5,  time:'19:00–20:30', dur:90, level:'中级',  lc:'intermediate', cap:15, room:'舞室 C', color:'#27ae60', desc:'当代舞融合芭蕾、现代舞和即兴舞蹈精华，注重情感表达与身体创意。', req:'需有芭蕾或现代舞基础' },
-    { name:'Popping 机械舞', emoji:'🤖', teacher:'Ray 老师',  da:6,  time:'14:00–15:30', dur:90, level:'全级',  lc:'all',          cap:20, room:'舞室 B', color:'#f39c12', desc:'Popping 利用肌肉快速收缩制造"爆破"感，从基础 hit 开始涵盖 waving、tutting 等进阶技巧。', req:'无基础要求，老少皆宜' },
-    { name:'儿童舞蹈',       emoji:'⭐', teacher:'小华 老师', da:7,  time:'10:00–11:00', dur:60, level:'儿童班', lc:'kids',         cap:15, room:'舞室 A', color:'#e67e22', desc:'专为 4–12 岁儿童设计的趣味舞蹈课程，培养节奏感、协调能力和表演信心。', req:'适合 4–12 岁儿童，家长可陪同观课' },
-    { name:'爵士舞进阶',     emoji:'🌟', teacher:'Alex 老师', da:8,  time:'16:00–17:30', dur:90, level:'高级',  lc:'advanced',     cap:12, room:'舞室 B', color:'#c0392b', desc:'为有一定基础的学员打造，系统学习复杂编排和技巧提升，包含专业表演技巧和舞台表现力训练。', req:'需有 1 年以上爵士舞学习经历' },
-    { name:'Jazz Funk',     emoji:'💃', teacher:'Alex 老师', da:10, time:'19:00–20:30', dur:90, level:'初级',  lc:'beginner',     cap:20, room:'舞室 A', color:'#e94560', desc:'Jazz Funk 融合爵士舞与街舞元素，节奏感强，动作帅气。专为初学者设计，从基础律动开始逐步掌握核心技巧。', req:'无舞蹈基础要求，穿着舒适运动服和运动鞋即可' },
-    { name:'Hip Hop',       emoji:'🤸', teacher:'Ray 老师',  da:11, time:'18:30–20:00', dur:90, level:'中级',  lc:'intermediate', cap:15, room:'舞室 B', color:'#4a90e2', desc:'正宗 Hip Hop 文化与舞蹈，涵盖 Popping、Locking 等多种街舞风格，适合有一定基础的学员。', req:'需有 6 个月以上舞蹈学习经历' },
-    { name:'芭蕾基础',       emoji:'🩰', teacher:'小华 老师', da:12, time:'10:00–11:30', dur:90, level:'初级',  lc:'beginner',     cap:20, room:'舞室 A', color:'#9b59b6', desc:'经典芭蕾舞基础训练，培养优雅姿态、柔韧性和身体协调能力，适合零基础成人。', req:'无基础要求，需穿芭蕾软鞋（可在场馆购买）' },
-    { name:'当代舞',         emoji:'🎭', teacher:'Ming 老师', da:13, time:'19:00–20:30', dur:90, level:'中级',  lc:'intermediate', cap:15, room:'舞室 C', color:'#27ae60', desc:'当代舞融合芭蕾、现代舞和即兴舞蹈精华，注重情感表达与身体创意。', req:'需有芭蕾或现代舞基础' },
-    { name:'Popping 机械舞', emoji:'🤖', teacher:'Ray 老师',  da:14, time:'14:00–15:30', dur:90, level:'全级',  lc:'all',          cap:20, room:'舞室 B', color:'#f39c12', desc:'Popping 利用肌肉快速收缩制造"爆破"感，从基础 hit 开始涵盖 waving、tutting 等进阶技巧。', req:'无基础要求，老少皆宜' },
-  ];
-  return tmpl.map((t, i) => ({
-    id: i + 1,
-    name: t.name, emoji: t.emoji, teacher: t.teacher,
-    date: relDate(t.da), time: t.time, duration: t.dur,
-    level: t.level, levelClass: t.lc, capacity: t.cap,
-    room: t.room, color: t.color,
-    description: t.desc, requirements: t.req,
-    teacherIntro: '', videoUrl: '', localVideoData: '', localVideoName: ''
-  }));
-}
-
 // ===== App State =====
-let currentPage         = 'home';
-let currentDateFilter   = 'all';
-let adminLoggedIn       = false;
-let adminTab            = 'bookings';
-let adminBookingFilter  = '';
-let mineTab             = 'bookings';
-let _editingCourseId    = null;
-let _videoState         = { data:'', name:'', reading:false, cleared:false };
-let _pendingBookingId   = null; // course to book after login
+let currentPage        = 'home';
+let currentDateFilter  = 'all';
+let adminLoggedIn      = false;
+let adminTab           = 'bookings';
+let adminBookingFilter = '';
+let mineTab            = 'bookings';
+let _editingCourseId   = null;
+let _pendingBookingId  = null;
 
-// ===== Storage =====
-function getCourses() {
-  const raw = localStorage.getItem('scs_courses');
-  if (raw) {
-    const p = JSON.parse(raw);
-    if (p.length > 0 && !p[0].date) { const d = buildDefaultCourses(); saveCourses(d); return d; }
-    return p;
-  }
-  return buildDefaultCourses();
-}
-function saveCourses(list) { localStorage.setItem('scs_courses', JSON.stringify(list)); }
-
-function getBookings() { return JSON.parse(localStorage.getItem('scs_bookings') || '[]'); }
-function saveBookings(b) { localStorage.setItem('scs_bookings', JSON.stringify(b)); }
-
-function getCards() { return JSON.parse(localStorage.getItem('scs_cards') || '[]'); }
-function saveCards(c) { localStorage.setItem('scs_cards', JSON.stringify(c)); }
-
-function getUsers() { return JSON.parse(localStorage.getItem('scs_users') || '[]'); }
-function saveUsers(u) { localStorage.setItem('scs_users', JSON.stringify(u)); }
-
-function getSession() {
-  const raw = localStorage.getItem('scs_session');
-  return raw ? JSON.parse(raw) : null;
-}
-function saveSession(s) { localStorage.setItem('scs_session', JSON.stringify(s)); }
+// ===== Session (localStorage only — no course/card/booking data) =====
+function getSession()    { const r = localStorage.getItem('scs_session'); return r ? JSON.parse(r) : null; }
+function saveSession(s)  { localStorage.setItem('scs_session', JSON.stringify(s)); }
 function clearSession()  { localStorage.removeItem('scs_session'); }
 
-// ===== Helpers =====
-function getBookedCount(courseId) {
-  return getBookings().filter(b => String(b.courseId) === String(courseId) && b.status === 'confirmed').length;
+// ===== Utilities =====
+function _esc(str) {
+  return String(str||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
-function getCourse(id) { return getCourses().find(c => String(c.id) === String(id)) || null; }
-function findUserByPhone(phone) { return getUsers().find(u => u.phone === phone) || null; }
-
+function matchesDateFilter(dateStr, filter) {
+  if (filter === 'all') return true;
+  const today = new Date(); today.setHours(0,0,0,0);
+  const [y,m,d] = dateStr.split('-').map(Number);
+  const cd = new Date(y, m-1, d);
+  if (filter === 'today') return cd.toDateString() === today.toDateString();
+  if (filter === 'week') {
+    const dow = today.getDay();
+    const ws  = new Date(today); ws.setDate(today.getDate() - (dow===0?6:dow-1));
+    const we  = new Date(ws);   we.setDate(ws.getDate() + 6);
+    return cd >= ws && cd <= we;
+  }
+  if (filter === 'month') return cd.getFullYear()===today.getFullYear() && cd.getMonth()===today.getMonth();
+  return true;
+}
 function fmtTs(ts) {
   const d = new Date(ts);
   return `${d.getMonth()+1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2,'0')}`;
 }
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
+function showErr(el, msg) { if (el) { el.textContent = msg; el.style.display = 'block'; } }
 
 function getCardStatus(card) {
   const today = todayIso();
@@ -114,70 +196,23 @@ function getCardStatus(card) {
   return { text:`余 ${card.remainingCredits} 次`, cls:'status-confirmed' };
 }
 
-function getValidCardForPhone(phone) {
-  const today = todayIso(), cards = getCards();
-  for (const c of cards)
-    if (c.phone === phone && c.type === 'period' && c.startDate <= today && today <= c.endDate) return c;
-  for (const c of cards)
-    if (c.phone === phone && c.type === 'credit' && c.remainingCredits > 0) return c;
-  return null;
+// ===== Loading helpers =====
+function loadingHTML() {
+  return '<div class="empty-state"><div class="empty-text" style="color:var(--text2);letter-spacing:1px">加载中…</div></div>';
 }
-
-function matchesDateFilter(dateStr, filter) {
-  if (filter === 'all') return true;
-  const today = new Date(); today.setHours(0,0,0,0);
-  const [y,m,d] = dateStr.split('-').map(Number);
-  const cd = new Date(y, m-1, d);
-  if (filter === 'today') return cd.getFullYear()===today.getFullYear() && cd.getMonth()===today.getMonth() && cd.getDate()===today.getDate();
-  if (filter === 'week') {
-    const dow = today.getDay();
-    const ws  = new Date(today); ws.setDate(today.getDate()-(dow===0?6:dow-1));
-    const we  = new Date(ws);   we.setDate(ws.getDate()+6);
-    return cd >= ws && cd <= we;
-  }
-  if (filter === 'month') return cd.getFullYear()===today.getFullYear() && cd.getMonth()===today.getMonth();
-  return true;
-}
-
-function _esc(str) {
-  return String(str||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
-
-// ===== Data Migration =====
-function migrateData() {
-  // Migrate bookings: add userId from phone
-  const bookings = getBookings();
-  let users = getUsers();
-  let changed = false;
-  const newBookings = bookings.map(b => {
-    if (b.userId) return b;
-    if (!b.phone) return b;
-    let u = users.find(x => x.phone === b.phone);
-    if (!u) {
-      u = { id: genId(), phone: b.phone, name: b.userName || `用户${b.phone.slice(-4)}`, createdAt: b.createdAt || Date.now() };
-      users.push(u);
-      changed = true;
-    }
-    return { ...b, userId: u.id };
-  });
-  if (changed) saveUsers(users);
-  const anyChanged = newBookings.some((b,i) => b !== bookings[i]);
-  if (anyChanged) saveBookings(newBookings);
+function errorHTML(msg) {
+  return `<div class="empty-state"><div class="empty-text">${msg||'加载失败，请刷新重试'}</div></div>`;
 }
 
 // ===== Auth =====
-function loginWithPhone(phone, name) {
-  const users = getUsers();
-  let user = users.find(u => u.phone === phone);
+async function loginWithPhone(phone, name) {
+  let user = await fetchUserByPhone(phone);
   if (!user) {
-    user = { id: genId(), phone, name: name || `用户${phone.slice(-4)}`, createdAt: Date.now() };
-    users.push(user);
-    saveUsers(users);
+    const rows = await sbPost('app_users', { phone, name: name || `用户${phone.slice(-4)}` });
+    user = rowToUser(rows[0]);
   } else if (name && (!user.name || user.name === `用户${phone.slice(-4)}`)) {
+    await sbPatch('app_users', `id=eq.${user.id}`, { name });
     user = { ...user, name };
-    const idx = users.findIndex(u => u.phone === phone);
-    users[idx] = user;
-    saveUsers(users);
   }
   saveSession({ userId: user.id, phone: user.phone, name: user.name });
   return user;
@@ -222,26 +257,34 @@ function openLoginModal(pendingCourseId) {
           onkeydown="if(event.key==='Enter') submitLogin()">
       </div>
       <div id="login-error" class="error-msg" style="display:none"></div>
-      <button class="btn-primary" onclick="submitLogin()">登录 / 注册</button>
+      <button class="btn-primary" id="login-submit-btn" onclick="submitLogin()">登录 / 注册</button>
       <button class="btn-outline" style="margin-top:10px;width:100%;display:block" onclick="closeModal('login')">取消</button>
     </div>`;
   openModal('login');
 }
 
-function submitLogin() {
+async function submitLogin() {
   const phone = document.getElementById('login-phone').value.trim();
   const name  = document.getElementById('login-name').value.trim();
   const errEl = document.getElementById('login-error');
   if (!phone || !/^1\d{10}$/.test(phone)) { showErr(errEl,'请输入正确的手机号（11位）'); return; }
-  const user = loginWithPhone(phone, name);
-  closeModal('login');
-  renderHeaderUser();
-  if (currentPage === 'mybookings') renderMine();
-  showToast(`欢迎，${user.name || user.phone}！`);
-  if (_pendingBookingId) {
-    const id = _pendingBookingId;
-    _pendingBookingId = null;
-    setTimeout(() => openBookingForm(id), 320);
+  const btn = document.getElementById('login-submit-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '登录中…'; }
+  try {
+    const user = await loginWithPhone(phone, name);
+    closeModal('login');
+    renderHeaderUser();
+    if (currentPage === 'mybookings') renderMine();
+    showToast(`欢迎，${user.name || user.phone}！`);
+    if (_pendingBookingId) {
+      const id = _pendingBookingId;
+      _pendingBookingId = null;
+      setTimeout(() => openBookingForm(id), 320);
+    }
+  } catch(e) {
+    if (btn) { btn.disabled = false; btn.textContent = '登录 / 注册'; }
+    showErr(errEl, '登录失败，请稍后重试');
+    console.error(e);
   }
 }
 
@@ -272,58 +315,65 @@ function renderVideoPlayer(localVideoData, videoUrl) {
   if (localVideoData) {
     return `<div class="video-container">
       <video controls playsinline
-        onerror="this.insertAdjacentHTML('afterend','<div style=\\'padding:20px;text-align:center;color:#aaa;font-size:0.8rem\\'>该格式暂不支持播放，建议使用 MP4 格式</div>');this.remove()">
+        onerror="this.insertAdjacentHTML('afterend','<div style=\\'padding:20px;text-align:center;color:#aaa;font-size:0.8rem\\'>该格式暂不支持播放</div>');this.remove()">
         <source src="${localVideoData}">
       </video></div>`;
   }
-  if (!videoUrl) return `<div class="video-placeholder"><div class="vp-icon">🎬</div><div class="vp-text">暂无预览视频</div></div>`;
+  if (!videoUrl) return `<div class="video-placeholder"><div class="vp-icon">▷</div><div class="vp-text">No preview video</div></div>`;
   const ytM = videoUrl.match(/(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([^&\s?\/]+)/);
-  if (ytM) return `<div class="video-container"><iframe src="https://www.youtube.com/embed/${ytM[1]}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe></div>`;
+  if (ytM) return `<div class="video-container"><iframe src="https://www.youtube.com/embed/${ytM[1]}" frameborder="0" allowfullscreen></iframe></div>`;
   const biM = videoUrl.match(/bilibili\.com\/video\/(BV[a-zA-Z0-9]+)/);
   if (biM) return `<div class="video-container"><iframe src="https://player.bilibili.com/player.html?bvid=${biM[1]}&page=1&high_quality=1&danmaku=0" frameborder="0" allowfullscreen></iframe></div>`;
   if (/\.(mp4|webm|ogg|mov)(\?.*)?$/i.test(videoUrl)) return `<div class="video-container"><video src="${videoUrl}" controls playsinline></video></div>`;
   const safe = encodeURIComponent(videoUrl);
-  return `<div class="video-placeholder" style="cursor:pointer" onclick="window.open(decodeURIComponent('${safe}'),'_blank')"><div class="vp-icon">▶️</div><div class="vp-text">点击查看视频</div></div>`;
+  return `<div class="video-placeholder" style="cursor:pointer" onclick="window.open(decodeURIComponent('${safe}'),'_blank')"><div class="vp-icon">▷</div><div class="vp-text">点击查看视频</div></div>`;
 }
 
 // ===== Schedule =====
-function renderSchedule() {
+async function renderSchedule() {
   const list = document.getElementById('courses-list');
-  const filtered = getCourses()
-    .filter(c => matchesDateFilter(c.date, currentDateFilter))
-    .sort((a,b) => a.date !== b.date ? a.date.localeCompare(b.date) : a.time.localeCompare(b.time));
+  list.innerHTML = loadingHTML();
+  try {
+    const [courses, bookedCounts] = await Promise.all([fetchCourses(), fetchBookedCounts()]);
+    const filtered = courses
+      .filter(c => matchesDateFilter(c.date, currentDateFilter))
+      .sort((a,b) => a.date !== b.date ? a.date.localeCompare(b.date) : a.time.localeCompare(b.time));
 
-  if (!filtered.length) {
-    const labels = { all:'暂无课程', today:'今天没有课程', week:'本周没有课程', month:'本月没有课程' };
-    list.innerHTML = `<div class="empty-state"><div class="empty-icon">—</div><div class="empty-text">${labels[currentDateFilter]||'暂无课程'}</div><div class="empty-hint">No classes in this period</div></div>`;
-    return;
-  }
-  list.innerHTML = filtered.map(c => {
-    const booked = getBookedCount(c.id), left = c.capacity - booked, full = left <= 0;
-    const [,m,d] = c.date.split('-');
-    const wdEn = WDAY_EN[getWeekday(c.date)] || '';
-    return `
-      <div class="course-row" onclick="openCourseDetail('${c.id}')">
-        <div class="cr-date">
-          <div class="cr-dn">${parseInt(d,10)}</div>
-          <div class="cr-month">${MONTH_EN[parseInt(m,10)-1]}</div>
-          <div class="cr-wday">${wdEn}</div>
-        </div>
-        <div class="cr-body">
-          <div class="cr-name">${_esc(c.name)}</div>
-          <div class="cr-meta">${_esc(c.teacher)} · ${_esc(c.time)} · ${_esc(c.room)}</div>
-        </div>
-        <div class="cr-end">
-          <span class="level-badge level-${c.levelClass}">${c.level}</span>
-          <div class="cr-book-row">
-            <span class="cr-spots${full?' cr-full':''}">${full?'已满':`余 ${left}`}</span>
-            <button class="cr-btn" ${full?'disabled':''} onclick="event.stopPropagation(); openBookingForm('${c.id}')">
-              ${full?'—':'预约'}
-            </button>
+    if (!filtered.length) {
+      const labels = { all:'暂无课程', today:'今天没有课程', week:'本周没有课程', month:'本月没有课程' };
+      list.innerHTML = `<div class="empty-state"><div class="empty-icon">—</div><div class="empty-text">${labels[currentDateFilter]||'暂无课程'}</div><div class="empty-hint">No classes in this period</div></div>`;
+      return;
+    }
+    list.innerHTML = filtered.map(c => {
+      const booked = bookedCounts[c.id] || 0, left = c.capacity - booked, full = left <= 0;
+      const [,m,d] = c.date.split('-');
+      const wdEn = WDAY_EN[getWeekday(c.date)] || '';
+      return `
+        <div class="course-row" onclick="openCourseDetail('${c.id}')">
+          <div class="cr-date">
+            <div class="cr-dn">${parseInt(d,10)}</div>
+            <div class="cr-month">${MONTH_EN[parseInt(m,10)-1]}</div>
+            <div class="cr-wday">${wdEn}</div>
           </div>
-        </div>
-      </div>`;
-  }).join('');
+          <div class="cr-body">
+            <div class="cr-name">${_esc(c.name)}</div>
+            <div class="cr-meta">${_esc(c.teacher)} · ${_esc(c.time)} · ${_esc(c.room)}</div>
+          </div>
+          <div class="cr-end">
+            <span class="level-badge level-${c.levelClass}">${c.level}</span>
+            <div class="cr-book-row">
+              <span class="cr-spots${full?' cr-full':''}">${full?'已满':`余 ${left}`}</span>
+              <button class="cr-btn" ${full?'disabled':''} onclick="event.stopPropagation(); openBookingForm('${c.id}')">
+                ${full?'—':'预约'}
+              </button>
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+  } catch(e) {
+    list.innerHTML = errorHTML('课程加载失败，请检查网络后刷新');
+    console.error(e);
+  }
 }
 
 function initDateFilter() {
@@ -338,140 +388,147 @@ function initDateFilter() {
 }
 
 // ===== Course Detail =====
-function openCourseDetail(courseId) {
-  const c = getCourse(courseId);
-  if (!c) return;
-  const booked = getBookedCount(c.id), left = c.capacity - booked, full = left <= 0;
-  document.getElementById('modal-detail-body').innerHTML = `
-    ${renderVideoPlayer(c.localVideoData, c.videoUrl)}
-    <div class="detail-kicker">
-      <span class="level-badge level-${c.levelClass}">${c.level}</span>
-      <span class="detail-dur">${c.duration||90} min</span>
-    </div>
-    <div class="detail-header">
-      <div class="detail-title">${_esc(c.name)}</div>
-      <div class="detail-teacher">${_esc(c.teacher)}</div>
-    </div>
-    <div class="detail-meta">
-      <div class="detail-meta-row"><span class="detail-meta-label">日期</span><span class="detail-meta-val">${fmtCourseDate(c.date)}</span></div>
-      <div class="detail-meta-row"><span class="detail-meta-label">时间</span><span class="detail-meta-val">${_esc(c.time)}</span></div>
-      <div class="detail-meta-row"><span class="detail-meta-label">地点</span><span class="detail-meta-val">${_esc(c.room)}</span></div>
-      <div class="detail-meta-row"><span class="detail-meta-label">名额</span><span class="detail-meta-val">${full?`<span style="color:var(--accent)">名额已满</span>`:`余 ${left} 位（共 ${c.capacity} 位）`}</span></div>
-    </div>
-    ${c.description ? `<div class="detail-desc"><h4>课程介绍</h4><p>${_esc(c.description)}</p></div>` : ''}
-    ${c.teacherIntro ? `<div class="detail-desc"><h4>教练介绍</h4><p>${_esc(c.teacherIntro)}</p></div>` : ''}
-    ${c.requirements ? `<div class="detail-desc"><h4>报名要求</h4><p>${_esc(c.requirements)}</p></div>` : ''}
-    <div class="detail-footer">
-      <button class="btn-primary" ${full?'disabled':''} onclick="closeModal('detail'); openBookingForm('${c.id}')">
-        ${full?'名额已满':'立即预约'}
-      </button>
-    </div>`;
+async function openCourseDetail(courseId) {
   openModal('detail');
+  document.getElementById('modal-detail-body').innerHTML = '<div style="padding:48px;text-align:center;color:var(--text2)">加载中…</div>';
+  try {
+    const [c, bookedCount] = await Promise.all([fetchCourse(courseId), fetchBookedCountForCourse(courseId)]);
+    if (!c) { closeModal('detail'); return; }
+    const left = c.capacity - bookedCount, full = left <= 0;
+    document.getElementById('modal-detail-body').innerHTML = `
+      ${renderVideoPlayer(c.localVideoData, c.videoUrl)}
+      <div class="detail-kicker">
+        <span class="level-badge level-${c.levelClass}">${c.level}</span>
+        <span class="detail-dur">${c.duration||90} min</span>
+      </div>
+      <div class="detail-header">
+        <div class="detail-title">${_esc(c.name)}</div>
+        <div class="detail-teacher">${_esc(c.teacher)}</div>
+      </div>
+      <div class="detail-meta">
+        <div class="detail-meta-row"><span class="detail-meta-label">日期</span><span class="detail-meta-val">${fmtCourseDate(c.date)}</span></div>
+        <div class="detail-meta-row"><span class="detail-meta-label">时间</span><span class="detail-meta-val">${_esc(c.time)}</span></div>
+        <div class="detail-meta-row"><span class="detail-meta-label">地点</span><span class="detail-meta-val">${_esc(c.room)}</span></div>
+        <div class="detail-meta-row"><span class="detail-meta-label">名额</span><span class="detail-meta-val">${full?`<span style="color:var(--accent)">名额已满</span>`:`余 ${left} 位（共 ${c.capacity} 位）`}</span></div>
+      </div>
+      ${c.description ? `<div class="detail-desc"><h4>课程介绍</h4><p>${_esc(c.description)}</p></div>` : ''}
+      ${c.teacherIntro ? `<div class="detail-desc"><h4>教练介绍</h4><p>${_esc(c.teacherIntro)}</p></div>` : ''}
+      ${c.requirements ? `<div class="detail-desc"><h4>报名要求</h4><p>${_esc(c.requirements)}</p></div>` : ''}
+      <div class="detail-footer">
+        <button class="btn-primary" ${full?'disabled':''} onclick="closeModal('detail'); openBookingForm('${c.id}')">
+          ${full?'名额已满':'立即预约'}
+        </button>
+      </div>`;
+  } catch(e) {
+    document.getElementById('modal-detail-body').innerHTML = errorHTML('加载失败');
+    console.error(e);
+  }
 }
 
 // ===== Booking =====
-function openBookingForm(courseId) {
+async function openBookingForm(courseId) {
   const user = getSession();
   if (!user) { openLoginModal(courseId); return; }
-
-  const c = getCourse(courseId);
-  if (!c) return;
-
-  const booked  = getBookedCount(c.id);
-  const full    = booked >= c.capacity;
-  const dup     = getBookings().some(b =>
-    String(b.courseId) === String(courseId) &&
-    (b.userId === user.userId || b.phone === user.phone) &&
-    b.status === 'confirmed'
-  );
-  const validCard = getValidCardForPhone(user.phone);
-
-  let statusHtml = '', canBook = false;
-  if (full) {
-    statusHtml = `<div class="bk-warn">该课程名额已满</div>`;
-  } else if (dup) {
-    statusHtml = `<div class="bk-warn">你已预约了该场次，不可重复预约</div>`;
-  } else if (!validCard) {
-    statusHtml = `<div class="bk-warn">暂无可用课卡，请联系管理员开通。</div>`;
-  } else {
-    canBook = true;
-    const cardDesc = validCard.type === 'credit'
-      ? `次数卡（剩余 ${validCard.remainingCredits} 次）`
-      : `期限卡（有效至 ${validCard.endDate}）`;
-    statusHtml = `<div class="bk-card-ok">🎟️ ${cardDesc}</div>`;
-  }
-
-  document.getElementById('modal-booking-body').innerHTML = `
-    <div class="modal-body">
-      <h3 class="modal-title">${_esc(c.name)}</h3>
-      <div class="booking-session-info">
-        <div class="bsi-date">${fmtCourseDate(c.date)}</div>
-        <div class="bsi-detail">${_esc(c.time)} · ${_esc(c.room)}</div>
-      </div>
-      <div class="booking-user-info">${_esc(user.name || user.phone)} &nbsp;·&nbsp; ${user.phone}</div>
-      ${statusHtml}
-      <div id="bk-error" class="error-msg" style="display:none"></div>
-      ${canBook ? `<button class="btn-primary" onclick="submitBooking('${c.id}')">确认预约</button>` : ''}
-      <button class="btn-outline" style="margin-top:10px;width:100%;display:block" onclick="closeModal('booking')">关闭</button>
-    </div>`;
   openModal('booking');
+  document.getElementById('modal-booking-body').innerHTML = '<div style="padding:48px;text-align:center;color:var(--text2)">加载中…</div>';
+  try {
+    const [c, bookedCount, myBookings, validCard] = await Promise.all([
+      fetchCourse(courseId),
+      fetchBookedCountForCourse(courseId),
+      fetchUserBookings(user.userId),
+      fetchValidCardForPhone(user.phone)
+    ]);
+    if (!c) { closeModal('booking'); return; }
+    const full = bookedCount >= c.capacity;
+    const dup  = myBookings.some(b => b.courseId === courseId && b.status === 'confirmed');
+    let statusHtml = '', canBook = false;
+    if (full) {
+      statusHtml = `<div class="bk-warn">该课程名额已满</div>`;
+    } else if (dup) {
+      statusHtml = `<div class="bk-warn">你已预约了该场次，不可重复预约</div>`;
+    } else if (!validCard) {
+      statusHtml = `<div class="bk-warn">暂无可用课卡，请联系管理员开通。</div>`;
+    } else {
+      canBook = true;
+      const cardDesc = validCard.type === 'credit'
+        ? `次数卡（剩余 ${validCard.remainingCredits} 次）`
+        : `期限卡（有效至 ${validCard.endDate}）`;
+      statusHtml = `<div class="bk-card-ok">◈ ${cardDesc}</div>`;
+    }
+    document.getElementById('modal-booking-body').innerHTML = `
+      <div class="modal-body">
+        <h3 class="modal-title">${_esc(c.name)}</h3>
+        <div class="booking-session-info">
+          <div class="bsi-date">${fmtCourseDate(c.date)}</div>
+          <div class="bsi-detail">${_esc(c.time)} · ${_esc(c.room)}</div>
+        </div>
+        <div class="booking-user-info">${_esc(user.name || user.phone)} &nbsp;·&nbsp; ${user.phone}</div>
+        ${statusHtml}
+        <div id="bk-error" class="error-msg" style="display:none"></div>
+        ${canBook ? `<button class="btn-primary" id="bk-confirm-btn" onclick="submitBooking('${c.id}')">确认预约</button>` : ''}
+        <button class="btn-outline" style="margin-top:10px;width:100%;display:block" onclick="closeModal('booking')">关闭</button>
+      </div>`;
+  } catch(e) {
+    document.getElementById('modal-booking-body').innerHTML = errorHTML('加载失败，请重试');
+    console.error(e);
+  }
 }
 
-function submitBooking(courseId) {
+async function submitBooking(courseId) {
   const user  = getSession();
   const errEl = document.getElementById('bk-error');
   if (!user) { showErr(errEl,'请先登录'); return; }
+  const btn = document.getElementById('bk-confirm-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '处理中…'; }
+  try {
+    const [c, bookedCount, myBookings, validCard] = await Promise.all([
+      fetchCourse(courseId),
+      fetchBookedCountForCourse(courseId),
+      fetchUserBookings(user.userId),
+      fetchValidCardForPhone(user.phone)
+    ]);
+    if (!c) { showErr(errEl,'课程不存在'); if(btn){btn.disabled=false;btn.textContent='确认预约';} return; }
+    if (bookedCount >= c.capacity) { showErr(errEl,'名额已满'); if(btn){btn.disabled=false;btn.textContent='确认预约';} return; }
+    if (myBookings.some(b => b.courseId === courseId && b.status === 'confirmed')) { showErr(errEl,'你已预约了该场次'); if(btn){btn.disabled=false;btn.textContent='确认预约';} return; }
+    if (!validCard) { showErr(errEl,'暂无可用课卡'); if(btn){btn.disabled=false;btn.textContent='确认预约';} return; }
 
-  const c = getCourse(courseId);
-  if (!c || getBookedCount(courseId) >= c.capacity) { showErr(errEl,'名额已满'); return; }
+    let cardNote = '';
+    if (validCard.type === 'credit') {
+      const newRem = validCard.remainingCredits - 1;
+      await sbPatch('course_cards', `id=eq.${validCard.id}`, { remaining_credits: newRem });
+      cardNote = `已消耗 1 次课卡，剩余 ${newRem} 次`;
+    } else {
+      cardNote = '期限卡有效，本次课程已记录';
+    }
 
-  const dup = getBookings().some(b =>
-    String(b.courseId) === String(courseId) &&
-    (b.userId === user.userId || b.phone === user.phone) &&
-    b.status === 'confirmed'
-  );
-  if (dup) { showErr(errEl,'你已预约了该场次'); return; }
+    await sbPost('bookings', {
+      course_id: c.id, user_id: user.userId, phone: user.phone,
+      user_name: user.name || `用户${user.phone.slice(-4)}`,
+      status: 'confirmed', card_id: validCard.id, card_type: validCard.type
+    });
 
-  const validCard = getValidCardForPhone(user.phone);
-  if (!validCard) { showErr(errEl,'暂无可用课卡，请联系管理员开通。'); return; }
-
-  let cardNote = '';
-  if (validCard.type === 'credit') {
-    const newRem = validCard.remainingCredits - 1;
-    saveCards(getCards().map(card => card.id === validCard.id ? {...card, remainingCredits:newRem} : card));
-    cardNote = `已消耗 1 次课卡，剩余 ${newRem} 次`;
-  } else {
-    cardNote = '期限卡有效，本次课程已记录';
+    document.getElementById('modal-booking-body').innerHTML = `
+      <div class="success-state">
+        <div class="success-icon">✓</div>
+        <div class="success-title">预约成功</div>
+        <div class="success-sub">${_esc(c.name)}<br>${fmtCourseDate(c.date)} ${_esc(c.time)}<br>${_esc(c.room)}</div>
+        <div class="success-card-note">${_esc(cardNote)}</div>
+        <button class="btn-primary" onclick="closeModal('booking'); navigate('mybookings')">查看我的预约</button>
+      </div>`;
+    showToast('预约成功');
+    if (currentPage === 'schedule') renderSchedule();
+  } catch(e) {
+    if (btn) { btn.disabled = false; btn.textContent = '确认预约'; }
+    const isDup = e.status === 409 || (e.body||'').includes('bookings_no_dup');
+    showErr(errEl, isDup ? '你已预约了该场次' : '预约失败，请重试');
+    console.error(e);
   }
-
-  const bookings = getBookings();
-  bookings.push({
-    id: genId(), courseId: String(c.id),
-    userId: user.userId, phone: user.phone,
-    courseName: c.name, courseEmoji: c.emoji, teacher: c.teacher,
-    date: c.date, day: getWeekday(c.date), time: c.time, room: c.room,
-    userName: user.name || `用户${user.phone.slice(-4)}`,
-    status: 'confirmed', cardId: validCard.id, cardType: validCard.type, createdAt: Date.now()
-  });
-  saveBookings(bookings);
-
-  document.getElementById('modal-booking-body').innerHTML = `
-    <div class="success-state">
-      <div class="success-icon">✓</div>
-      <div class="success-title">预约成功</div>
-      <div class="success-sub">${_esc(c.name)}<br>${fmtCourseDate(c.date)} ${_esc(c.time)}<br>${_esc(c.room)}</div>
-      <div class="success-card-note">${_esc(cardNote)}</div>
-      <button class="btn-primary" onclick="closeModal('booking'); navigate('mybookings')">查看我的预约</button>
-    </div>`;
-  showToast('预约成功');
 }
-
-function showErr(el, msg) { el.textContent = msg; el.style.display = 'block'; }
 
 // ===== Mine Page =====
 function switchMineTab(tab) { mineTab = tab; renderMine(); }
 
-function renderMine() {
+async function renderMine() {
   const user = getSession();
   const el   = document.getElementById('mine-content');
   if (!user) {
@@ -485,11 +542,6 @@ function renderMine() {
       </div>`;
     return;
   }
-  let content = '';
-  if (mineTab === 'bookings') content = renderMineBookings(user);
-  if (mineTab === 'cards')    content = renderMineCards(user);
-  if (mineTab === 'account')  content = renderMineAccount(user);
-
   el.innerHTML = `
     <div class="page-top" style="padding-bottom:0"><h2 class="page-title">我的</h2></div>
     <div class="mine-tabs">
@@ -497,14 +549,23 @@ function renderMine() {
       <button class="mine-tab ${mineTab==='cards'   ?'active':''}" onclick="switchMineTab('cards')">课卡</button>
       <button class="mine-tab ${mineTab==='account' ?'active':''}" onclick="switchMineTab('account')">账户</button>
     </div>
-    ${content}`;
+    <div id="mine-tab-content">${loadingHTML()}</div>`;
+  try {
+    let content = '';
+    if (mineTab === 'bookings') content = await renderMineBookings(user);
+    if (mineTab === 'cards')    content = await renderMineCards(user);
+    if (mineTab === 'account')  content = renderMineAccount(user);
+    const tc = document.getElementById('mine-tab-content');
+    if (tc) tc.innerHTML = content;
+  } catch(e) {
+    const tc = document.getElementById('mine-tab-content');
+    if (tc) tc.innerHTML = errorHTML('加载失败，请重试');
+    console.error(e);
+  }
 }
 
-function renderMineBookings(user) {
-  const myBookings = getBookings()
-    .filter(b => b.userId === user.userId || b.phone === user.phone)
-    .slice().reverse();
-
+async function renderMineBookings(user) {
+  const myBookings = await fetchUserBookings(user.userId);
   if (!myBookings.length) {
     return `<div class="mine-body"><div class="empty-state">
       <div class="empty-icon">—</div>
@@ -514,24 +575,24 @@ function renderMineBookings(user) {
     </div></div>`;
   }
   return `<div class="mine-body">${myBookings.map(b => {
-    const dateDisplay = b.date ? fmtCourseDate(b.date) : (b.day || '');
+    const dateDisplay = b.date ? fmtCourseDate(b.date) : '';
     return `
       <div class="booking-card">
         <div class="booking-header">
           <div>
             <div class="booking-name">${_esc(b.courseName)}</div>
-            <div class="booking-day">${dateDisplay} · ${_esc(b.time)}</div>
+            <div class="booking-day">${dateDisplay}${b.time?' · '+_esc(b.time):''}</div>
           </div>
           <span class="status-badge status-${b.status}">${b.status==='confirmed'?'已确认':'已取消'}</span>
         </div>
-        <div class="booking-meta">${_esc(b.room)} · ${_esc(b.teacher)}<br>预约于 ${fmtTs(b.createdAt)}</div>
+        <div class="booking-meta">${b.room?_esc(b.room)+' · ':''}${_esc(b.teacher)}<br>预约于 ${fmtTs(b.createdAt)}</div>
         ${b.status==='confirmed' ? `<button class="btn-cancel" onclick="cancelMyBooking('${b.id}')">取消预约</button>` : ''}
       </div>`;
   }).join('')}</div>`;
 }
 
-function renderMineCards(user) {
-  const myCards = getCards().filter(c => c.phone === user.phone);
+async function renderMineCards(user) {
+  const myCards = await fetchCardsByPhone(user.phone);
   if (!myCards.length) {
     return `<div class="mine-body"><div class="empty-state">
       <div class="empty-icon">—</div>
@@ -579,40 +640,47 @@ function renderMineAccount(user) {
     </div>`;
 }
 
-function saveMineProfile() {
+async function saveMineProfile() {
   const name    = document.getElementById('mine-name-input').value.trim();
   const session = getSession();
   if (!session) return;
-  const users = getUsers().map(u => u.id === session.userId ? {...u, name} : u);
-  saveUsers(users);
-  saveSession({...session, name});
-  renderHeaderUser();
-  renderMine();
-  showToast('姓名已更新');
+  try {
+    await sbPatch('app_users', `id=eq.${session.userId}`, { name });
+    saveSession({...session, name});
+    renderHeaderUser();
+    renderMine();
+    showToast('姓名已更新');
+  } catch(e) {
+    showToast('更新失败，请重试'); console.error(e);
+  }
 }
 
-function cancelMyBooking(id) {
-  const session = getSession();
-  const booking = getBookings().find(b => b.id === id);
-  if (!booking) return;
-  if (session && booking.userId && booking.userId !== session.userId && booking.phone !== session.phone) {
-    showToast('无权操作他人预约'); return;
-  }
+async function cancelMyBooking(id) {
   if (!confirm('确定要取消该预约吗？')) return;
-  let toastMsg = '预约已取消';
-  if (booking.cardType === 'credit' && booking.cardId) {
-    const cards = getCards(), idx = cards.findIndex(c => c.id === booking.cardId);
-    if (idx >= 0) { cards[idx] = {...cards[idx], remainingCredits: cards[idx].remainingCredits + 1}; saveCards(cards); toastMsg = '预约已取消，课卡次数已退还'; }
+  try {
+    const rows = await sbGet(`bookings?id=eq.${id}`);
+    const b = rows[0]; if (!b) return;
+    let toastMsg = '预约已取消';
+    if (b.card_type === 'credit' && b.card_id) {
+      const cardRows = await sbGet(`course_cards?id=eq.${b.card_id}`);
+      if (cardRows.length) {
+        await sbPatch('course_cards', `id=eq.${b.card_id}`, { remaining_credits: cardRows[0].remaining_credits + 1 });
+        toastMsg = '预约已取消，课卡次数已退还';
+      }
+    }
+    await sbPatch('bookings', `id=eq.${id}`, { status: 'cancelled' });
+    showToast(toastMsg);
+    renderMine();
+    if (currentPage === 'schedule') renderSchedule();
+  } catch(e) {
+    showToast('操作失败，请重试'); console.error(e);
   }
-  saveBookings(getBookings().map(b => b.id === id ? {...b, status:'cancelled'} : b));
-  renderMine();
-  showToast(toastMsg);
 }
 
 // ===== Admin =====
 function switchAdminTab(tab) { adminTab = tab; renderAdmin(); }
 
-function renderAdmin() {
+async function renderAdmin() {
   const el = document.getElementById('admin-content');
   if (!adminLoggedIn) {
     el.innerHTML = `
@@ -623,12 +691,6 @@ function renderAdmin() {
       </div>`;
     return;
   }
-  let content = '';
-  if (adminTab === 'courses')  content = renderAdminCoursesHTML();
-  if (adminTab === 'bookings') content = renderAdminBookingsHTML();
-  if (adminTab === 'cards')    content = renderAdminCardsHTML();
-  if (adminTab === 'users')    content = renderAdminUsersHTML();
-
   el.innerHTML = `
     <div class="admin-tabs">
       <button class="admin-tab ${adminTab==='courses' ?'active':''}" onclick="switchAdminTab('courses')">课程</button>
@@ -636,15 +698,29 @@ function renderAdmin() {
       <button class="admin-tab ${adminTab==='cards'   ?'active':''}" onclick="switchAdminTab('cards')">课卡</button>
       <button class="admin-tab ${adminTab==='users'   ?'active':''}" onclick="switchAdminTab('users')">用户</button>
     </div>
-    <div class="admin-body">${content}<button class="btn-logout" onclick="adminLogout()">退出管理员</button></div>`;
+    <div class="admin-body" id="admin-tab-body">${loadingHTML()}</div>`;
+  try {
+    let content = '';
+    if (adminTab === 'courses')  content = await renderAdminCoursesHTML();
+    if (adminTab === 'bookings') content = await renderAdminBookingsHTML();
+    if (adminTab === 'cards')    content = await renderAdminCardsHTML();
+    if (adminTab === 'users')    content = await renderAdminUsersHTML();
+    const body = document.getElementById('admin-tab-body');
+    if (body) body.innerHTML = content + `<button class="btn-logout" onclick="adminLogout()">退出管理员</button>`;
+  } catch(e) {
+    const body = document.getElementById('admin-tab-body');
+    if (body) body.innerHTML = errorHTML('加载失败，请重试');
+    console.error(e);
+  }
 }
 
 // ── Admin: Courses ──
-function renderAdminCoursesHTML() {
-  const courses = getCourses().slice().sort((a,b) => a.date !== b.date ? a.date.localeCompare(b.date) : a.time.localeCompare(b.time));
-  const rows = courses.map(c => {
-    const left = c.capacity - getBookedCount(c.id);
-    const vt = c.localVideoData ? '本地视频' : c.videoUrl ? '视频链接' : '无视频';
+async function renderAdminCoursesHTML() {
+  const [courses, bookedCounts] = await Promise.all([fetchCourses(), fetchBookedCounts()]);
+  const sorted = courses.slice().sort((a,b) => a.date !== b.date ? a.date.localeCompare(b.date) : a.time.localeCompare(b.time));
+  const rows = sorted.map(c => {
+    const left = c.capacity - (bookedCounts[c.id] || 0);
+    const vt   = c.videoUrl ? '视频链接' : '无视频';
     return `
       <div class="admin-booking-item">
         <div class="admin-booking-info">
@@ -663,339 +739,19 @@ function renderAdminCoursesHTML() {
         <span>课程管理（${courses.length}）</span>
         <button class="btn-add" onclick="openCourseForm(null)">+ 新增</button>
       </div>
-      ${rows || '<div style="text-align:center;color:var(--text2);padding:20px;font-size:0.8rem">暂无课程</div>'}
+      ${rows || '<div style="text-align:center;color:var(--text2);padding:20px;font-size:0.8rem">暂无课程，点击新增添加</div>'}
     </div>`;
 }
 
-// ── Admin: Bookings ──
-function renderAdminBookingsHTML() {
-  const all      = getBookings();
-  const conf     = all.filter(b => b.status === 'confirmed');
-  const canc     = all.filter(b => b.status === 'cancelled');
-  const filtered = adminBookingFilter
-    ? all.filter(b => b.phone && b.phone.includes(adminBookingFilter))
-    : all;
-
-  const capRows = getCourses().slice().sort((a,b) => a.date.localeCompare(b.date)).map(c => {
-    const n = getBookedCount(c.id), pct = Math.round(n/c.capacity*100);
-    return `<div class="admin-booking-item"><div class="admin-booking-info">
-      <div class="admin-booking-name">${_esc(c.name)}</div>
-      <div class="admin-booking-detail">${fmtCourseDate(c.date)} · ${_esc(c.teacher)} · ${n}/${c.capacity} 人（${pct}%）</div>
-    </div></div>`;
-  }).join('');
-
-  const bkRows = filtered.length === 0
-    ? `<div style="text-align:center;color:var(--text2);padding:20px;font-size:0.8rem">${adminBookingFilter?'无匹配预约':'暂无预约'}</div>`
-    : filtered.slice().reverse().map(b => {
-        const dateDisplay = b.date ? fmtCourseDate(b.date) : (b.day||'');
-        const user = findUserByPhone(b.phone);
-        const userName = user ? (user.name||user.phone) : (b.userName||b.phone||'未知');
-        return `
-        <div class="admin-booking-item">
-          <div class="admin-booking-info">
-            <div class="admin-booking-name">${_esc(b.courseName)} · ${dateDisplay}</div>
-            <div class="admin-booking-detail">${_esc(userName)} · ${b.phone||''} · ${fmtTs(b.createdAt)}</div>
-          </div>
-          <div class="admin-item-actions">
-            <span class="status-badge status-${b.status}">${b.status==='confirmed'?'已确认':'已取消'}</span>
-            <button class="admin-toggle" onclick="adminToggleBooking('${b.id}')">
-              ${b.status==='confirmed'?'取消':'恢复'}
-            </button>
-          </div>
-        </div>`;
-      }).join('');
-
-  return `
-    <div class="admin-card">
-      <div class="admin-card-title">数据概览</div>
-      <div class="admin-stats">
-        <div class="admin-stat"><div class="admin-stat-num">${all.length}</div><div class="admin-stat-lbl">总预约</div></div>
-        <div class="admin-stat"><div class="admin-stat-num">${conf.length}</div><div class="admin-stat-lbl">已确认</div></div>
-        <div class="admin-stat"><div class="admin-stat-num">${canc.length}</div><div class="admin-stat-lbl">已取消</div></div>
-      </div>
-    </div>
-    <div class="admin-card">
-      <div class="admin-card-title">课程容量</div>
-      ${capRows}
-    </div>
-    <div class="admin-card">
-      <div class="admin-card-title">预约记录（${all.length}）</div>
-      <div style="padding:10px 16px 4px">
-        <input class="form-input" style="font-size:0.82rem" placeholder="按手机号筛选…"
-          value="${adminBookingFilter}" oninput="adminBookingFilter=this.value; renderAdmin()">
-      </div>
-      ${bkRows}
-    </div>`;
-}
-
-function adminToggleBooking(id) {
-  const bookings = getBookings();
-  const b = bookings.find(bk => bk.id === id);
-  if (!b) return;
-  // Refund credits when cancelling
-  if (b.status === 'confirmed' && b.cardType === 'credit' && b.cardId) {
-    const cards = getCards(), idx = cards.findIndex(c => c.id === b.cardId);
-    if (idx >= 0) { cards[idx] = {...cards[idx], remainingCredits: cards[idx].remainingCredits + 1}; saveCards(cards); }
-  }
-  saveBookings(bookings.map(bk => bk.id === id ? {...bk, status: bk.status==='confirmed'?'cancelled':'confirmed'} : bk));
-  renderAdmin();
-}
-
-// ── Admin: Cards ──
-function renderAdminCardsHTML() {
-  const cards = getCards();
-  const rows = cards.length === 0
-    ? '<div style="text-align:center;color:var(--text2);padding:28px;font-size:0.8rem">暂无课卡记录</div>'
-    : cards.map(card => {
-        const st = getCardStatus(card);
-        const user = findUserByPhone(card.phone);
-        const displayName = user ? (user.name || user.phone) : (card.userName || card.phone);
-        const typeLabel = card.type === 'period' ? '期限卡' : '次数卡';
-        const detail    = card.type === 'period' ? `${card.startDate} ~ ${card.endDate}` : `${card.remainingCredits}/${card.totalCredits} 次`;
-        return `
-          <div class="admin-booking-item">
-            <div class="admin-booking-info">
-              <div class="admin-booking-name">${displayName} · ${card.phone}</div>
-              <div class="admin-booking-detail">${typeLabel} · ${detail}</div>
-            </div>
-            <div class="admin-item-actions">
-              <span class="status-badge ${st.cls}">${st.text}</span>
-              <button class="admin-toggle" onclick="openCardModal('${card.id}')">编辑</button>
-              <button class="admin-toggle admin-toggle-danger" onclick="deleteCard('${card.id}')">删除</button>
-            </div>
-          </div>`;
-      }).join('');
-
-  return `
-    <div class="admin-card">
-      <div class="admin-card-title">
-        <span>课卡管理（${cards.length}）</span>
-        <button class="btn-add" onclick="openCardModal('')">+ 新建</button>
-      </div>
-      ${rows}
-    </div>`;
-}
-
-function openCardModal(cardId) {
-  const card = cardId ? getCards().find(c => c.id === cardId) : null;
-  const isPeriod = !card || card.type === 'period';
-  const existingUser = card ? findUserByPhone(card.phone) : null;
-
-  document.getElementById('modal-card-body').innerHTML = `
-    <div class="modal-body">
-      <h3 class="modal-title">${card ? '编辑课卡' : '新建课卡'}</h3>
-      <div class="form-group">
-        <label class="form-label">用户手机号</label>
-        <input id="cd-phone" class="form-input" type="tel" placeholder="请输入手机号"
-          value="${card ? card.phone : ''}" ${card ? 'readonly' : ''}
-          oninput="lookupUserForCard(this.value)">
-        <div id="cd-user-lookup" style="margin-top:6px;font-size:0.8rem">
-          ${existingUser ? `<span class="user-found">✓ 用户：${_esc(existingUser.name||existingUser.phone)}</span>` : ''}
-        </div>
-      </div>
-      <div class="form-group">
-        <label class="form-label">课卡类型</label>
-        <select id="cd-type" class="form-input" onchange="toggleCardTypeFields()">
-          <option value="period" ${isPeriod?'selected':''}>期限卡（按有效期）</option>
-          <option value="credit" ${card&&card.type==='credit'?'selected':''}>次数卡（按次数）</option>
-        </select>
-      </div>
-      <div id="cd-period-fields" style="${isPeriod?'':'display:none'}">
-        <div class="form-group"><label class="form-label">开始日期</label>
-          <input id="cd-start" class="form-input" type="date" value="${card&&card.type==='period'?card.startDate:''}"></div>
-        <div class="form-group"><label class="form-label">结束日期</label>
-          <input id="cd-end" class="form-input" type="date" value="${card&&card.type==='period'?card.endDate:''}"></div>
-      </div>
-      <div id="cd-credit-fields" style="${card&&card.type==='credit'?'':'display:none'}">
-        <div class="form-group"><label class="form-label">总次数</label>
-          <input id="cd-total" class="form-input" type="number" min="1" placeholder="例：10" value="${card&&card.type==='credit'?card.totalCredits:''}"></div>
-        <div class="form-group"><label class="form-label">剩余次数</label>
-          <input id="cd-remaining" class="form-input" type="number" min="0" placeholder="例：10" value="${card&&card.type==='credit'?card.remainingCredits:''}"></div>
-      </div>
-      <div id="cd-error" class="error-msg" style="display:none"></div>
-      <button class="btn-primary" onclick="saveCard('${cardId||''}')">保存课卡</button>
-    </div>`;
-  openModal('card');
-}
-
-function lookupUserForCard(phone) {
-  const el = document.getElementById('cd-user-lookup');
-  if (!el) return;
-  if (!phone || phone.length < 11) { el.innerHTML = ''; return; }
-  const user = findUserByPhone(phone);
-  el.innerHTML = user
-    ? `<span class="user-found">✓ 用户：${_esc(user.name||user.phone)}</span>`
-    : `<span class="user-not-found">该手机号未注册，保存时将自动创建用户账户</span>`;
-}
-
-function toggleCardTypeFields() {
-  const t = document.getElementById('cd-type').value;
-  document.getElementById('cd-period-fields').style.display = t==='period' ? '' : 'none';
-  document.getElementById('cd-credit-fields').style.display = t==='credit' ? '' : 'none';
-}
-
-function saveCard(cardId) {
-  const phone  = document.getElementById('cd-phone').value.trim();
-  const type   = document.getElementById('cd-type').value;
-  const errEl  = document.getElementById('cd-error');
-
-  if (!phone || !/^1\d{10}$/.test(phone)) { showErr(errEl,'请输入正确的手机号（11位）'); return; }
-
-  // Ensure user exists
-  let user = findUserByPhone(phone);
-  if (!user) {
-    user = { id: genId(), phone, name:`用户${phone.slice(-4)}`, createdAt: Date.now() };
-    const users = getUsers(); users.push(user); saveUsers(users);
-  }
-
-  let cardData = { userId: user.id, userName: user.name, phone, type };
-
-  if (type === 'period') {
-    const start = document.getElementById('cd-start').value;
-    const end   = document.getElementById('cd-end').value;
-    if (!start||!end) { showErr(errEl,'请填写有效期的开始和结束日期'); return; }
-    if (start > end)  { showErr(errEl,'开始日期不能晚于结束日期'); return; }
-    cardData = {...cardData, startDate:start, endDate:end};
-  } else {
-    const total     = parseInt(document.getElementById('cd-total').value, 10);
-    const remaining = parseInt(document.getElementById('cd-remaining').value, 10);
-    if (!total||total<1)               { showErr(errEl,'请输入有效的总次数（≥1）'); return; }
-    if (isNaN(remaining)||remaining<0) { showErr(errEl,'剩余次数不能为负数'); return; }
-    if (remaining > total)             { showErr(errEl,'剩余次数不能大于总次数'); return; }
-    cardData = {...cardData, totalCredits:total, remainingCredits:remaining};
-  }
-
-  const cards = getCards();
-  if (cardId) {
-    const idx = cards.findIndex(c => c.id === cardId);
-    if (idx >= 0) cards[idx] = {...cards[idx], ...cardData};
-  } else {
-    cards.push({ id:genId(), ...cardData, createdAt:Date.now() });
-  }
-  saveCards(cards);
-  closeModal('card');
-  renderAdmin();
-  showToast(cardId ? '课卡已更新' : '课卡已创建 🎟️');
-}
-
-function deleteCard(cardId) {
-  if (!confirm('确定要删除该课卡吗？此操作不可撤销。')) return;
-  saveCards(getCards().filter(c => c.id !== cardId));
-  renderAdmin();
-  showToast('课卡已删除');
-}
-
-// ── Admin: Users ──
-function renderAdminUsersHTML() {
-  const users    = getUsers();
-  const cards    = getCards();
-  const bookings = getBookings();
-
-  const rows = users.map(u => {
-    const cardCnt = cards.filter(c => c.phone === u.phone).length;
-    const bkCnt   = bookings.filter(b => b.userId===u.id || b.phone===u.phone).length;
-    return `
-      <div class="admin-booking-item">
-        <div class="admin-booking-info">
-          <div class="admin-booking-name">${_esc(u.name||'未命名')} · ${u.phone}</div>
-          <div class="admin-booking-detail">注册：${fmtTs(u.createdAt)} · 课卡 ${cardCnt} 张 · 预约 ${bkCnt} 条</div>
-        </div>
-        <div class="admin-item-actions">
-          <button class="admin-toggle" onclick="openEditUserModal('${u.id}')">编辑</button>
-          <button class="admin-toggle admin-toggle-danger" onclick="deleteUser('${u.id}')">删除</button>
-        </div>
-      </div>`;
-  }).join('');
-
-  return `
-    <div class="admin-card">
-      <div class="admin-card-title">
-        <span>用户管理（${users.length}）</span>
-        <button class="btn-add" onclick="openCreateUserModal()">+ 创建</button>
-      </div>
-      ${rows || '<div style="text-align:center;color:var(--text2);padding:20px;font-size:0.8rem">暂无用户</div>'}
-    </div>`;
-}
-
-function openCreateUserModal() {
-  document.getElementById('modal-user-body').innerHTML = `
-    <div class="modal-body">
-      <h3 class="modal-title">创建用户</h3>
-      <div class="form-group"><label class="form-label">手机号 *</label>
-        <input id="mu-phone" class="form-input" type="tel" placeholder="请输入手机号"></div>
-      <div class="form-group"><label class="form-label">姓名</label>
-        <input id="mu-name" class="form-input" type="text" placeholder="用户姓名（可选）"></div>
-      <div id="mu-error" class="error-msg" style="display:none"></div>
-      <button class="btn-primary" onclick="saveUserAdmin(null)">创建</button>
-    </div>`;
-  openModal('user');
-}
-
-function openEditUserModal(userId) {
-  const user = getUsers().find(u => u.id === userId);
-  if (!user) return;
-  document.getElementById('modal-user-body').innerHTML = `
-    <div class="modal-body">
-      <h3 class="modal-title">编辑用户</h3>
-      <div class="form-group"><label class="form-label">手机号</label>
-        <input class="form-input" value="${user.phone}" disabled></div>
-      <div class="form-group"><label class="form-label">姓名</label>
-        <input id="mu-name" class="form-input" type="text" value="${_esc(user.name||'')}"></div>
-      <div id="mu-error" class="error-msg" style="display:none"></div>
-      <button class="btn-primary" onclick="saveUserAdmin('${userId}')">保存</button>
-    </div>`;
-  openModal('user');
-}
-
-function saveUserAdmin(userId) {
-  const errEl = document.getElementById('mu-error');
-  const name  = document.getElementById('mu-name').value.trim();
-  if (userId) {
-    // Edit
-    const users = getUsers().map(u => u.id === userId ? {...u, name} : u);
-    saveUsers(users);
-    const session = getSession();
-    if (session && session.userId === userId) { saveSession({...session, name}); renderHeaderUser(); }
-    closeModal('user'); renderAdmin(); showToast('用户信息已更新');
-  } else {
-    // Create
-    const phone = document.getElementById('mu-phone').value.trim();
-    if (!phone || !/^1\d{10}$/.test(phone)) { showErr(errEl,'请输入正确的手机号（11位）'); return; }
-    if (findUserByPhone(phone)) { showErr(errEl,'该手机号已注册'); return; }
-    const users = getUsers();
-    users.push({ id:genId(), phone, name:name||`用户${phone.slice(-4)}`, createdAt:Date.now() });
-    saveUsers(users);
-    closeModal('user'); renderAdmin(); showToast('用户已创建');
-  }
-}
-
-function deleteUser(userId) {
-  const user = getUsers().find(u => u.id === userId);
-  if (!user) return;
-  const cards    = getCards().filter(c => c.phone === user.phone);
-  const bookings = getBookings().filter(b => b.userId===userId || b.phone===user.phone);
-  if (!confirm(`确定删除用户「${user.name||user.phone}」吗？\n将同时删除 ${cards.length} 张课卡和 ${bookings.length} 条预约记录，此操作不可撤销。`)) return;
-  saveUsers(getUsers().filter(u => u.id !== userId));
-  saveCards(getCards().filter(c => c.phone !== user.phone));
-  saveBookings(getBookings().filter(b => b.userId !== userId && b.phone !== user.phone));
-  const session = getSession();
-  if (session && session.userId === userId) { clearSession(); renderHeaderUser(); }
-  renderAdmin(); showToast('用户已删除');
-}
-
-// ── Admin: Course Form ──
-function openCourseForm(courseId) {
+async function openCourseForm(courseId) {
   const isNew = courseId == null;
-  const c     = isNew ? null : getCourse(courseId);
+  let c = null;
+  if (!isNew) {
+    c = await fetchCourse(courseId);
+    if (!c) return;
+  }
   _editingCourseId = isNew ? null : courseId;
-
-  _videoState = { data: isNew?'':(c.localVideoData||''), name: isNew?'':(c.localVideoName||''), reading:false, cleared:false };
-
-  const minDate  = isNew ? ` min="${todayIso()}"` : '';
-  const videoInfo = _videoState.name
-    ? `<div class="video-file-info" id="ce-video-info">当前：<strong>${_esc(_videoState.name)}</strong><button class="video-clear-btn" onclick="clearLocalVideo()">清除</button></div>`
-    : `<div id="ce-video-info"></div>`;
-
+  const minDate = isNew ? ` min="${todayIso()}"` : '';
   document.getElementById('modal-courseedit-body').innerHTML = `
     <div class="modal-body">
       <h3 class="modal-title">${isNew?'新增课程场次':'编辑课程场次'}</h3>
@@ -1023,52 +779,14 @@ function openCourseForm(courseId) {
         <textarea id="ce-teacherintro" class="form-input" rows="3" placeholder="教练背景、经历等...">${isNew?'':_esc(c.teacherIntro||'')}</textarea></div>
       <div class="form-group"><label class="form-label">视频链接</label>
         <input id="ce-video" class="form-input" type="url" placeholder="YouTube / Bilibili / 直链 .mp4 URL" value="${isNew?'':_esc(c.videoUrl||'')}"></div>
-      <div class="form-group">
-        <label class="form-label">本地视频上传</label>
-        <div class="video-upload-hint">本地视频优先显示，演示版建议 5MB 以内，正式上线请使用云存储。</div>
-        ${videoInfo}
-        <label class="video-file-label">
-          <input id="ce-video-file" type="file" accept="video/mp4,video/quicktime,video/webm" style="display:none" onchange="handleVideoFile(this)">
-          <span class="video-file-btn">选择视频文件</span>
-        </label>
-        <div id="ce-video-pending" style="font-size:0.8rem;color:var(--text2);margin-top:6px;display:none">⏳ 处理中…</div>
-      </div>
       <div id="ce-error" class="error-msg" style="display:none"></div>
-      <button class="btn-primary" onclick="saveCourseForm()">保存</button>
+      <button class="btn-primary" id="ce-save-btn" onclick="saveCourseForm()">保存</button>
       <button class="btn-outline" style="margin-top:10px;width:100%;display:block" onclick="closeModal('courseedit')">取消</button>
     </div>`;
   openModal('courseedit');
 }
 
-function handleVideoFile(input) {
-  const file = input.files[0]; if (!file) return;
-  if (file.size > 5*1024*1024) {
-    alert(`文件过大（${(file.size/1024/1024).toFixed(1)} MB）。\n演示版建议 5MB 以内，正式上线请使用云存储。`);
-    input.value = ''; return;
-  }
-  _videoState.reading = true;
-  const p = document.getElementById('ce-video-pending'); if (p) p.style.display='';
-  const reader = new FileReader();
-  reader.onload = e => {
-    _videoState.data = e.target.result; _videoState.name = file.name;
-    _videoState.reading = false; _videoState.cleared = false;
-    if (p) p.textContent = `✓ 已选择：${file.name}`;
-    const info = document.getElementById('ce-video-info');
-    if (info) info.innerHTML = `当前：<strong>${_esc(file.name)}</strong> <button class="video-clear-btn" onclick="clearLocalVideo()">清除</button>`;
-  };
-  reader.onerror = () => { _videoState.reading = false; if (p) p.textContent = '❌ 读取失败，请重试'; };
-  reader.readAsDataURL(file);
-}
-
-function clearLocalVideo() {
-  _videoState = { data:'', name:'', reading:false, cleared:true };
-  const info = document.getElementById('ce-video-info');
-  if (info) info.innerHTML = '<span style="font-size:0.8rem;color:#aaa">已清除本地视频</span>';
-  const fi = document.getElementById('ce-video-file'); if (fi) fi.value = '';
-  const p  = document.getElementById('ce-video-pending'); if (p) p.style.display = 'none';
-}
-
-function saveCourseForm() {
+async function saveCourseForm() {
   const errEl        = document.getElementById('ce-error');
   const name         = document.getElementById('ce-name').value.trim();
   const emoji        = document.getElementById('ce-emoji').value.trim() || '🎵';
@@ -1081,47 +799,397 @@ function saveCourseForm() {
   const description  = document.getElementById('ce-desc').value.trim();
   const teacherIntro = document.getElementById('ce-teacherintro').value.trim();
   const videoUrl     = document.getElementById('ce-video').value.trim();
-
   errEl.style.display = 'none';
   if (!name)                     { showErr(errEl,'请填写课程名称'); return; }
   if (!teacher)                  { showErr(errEl,'请填写教练姓名'); return; }
   if (!date)                     { showErr(errEl,'请选择上课日期'); return; }
   if (!time)                     { showErr(errEl,'请填写上课时间'); return; }
   if (!capacity || capacity < 1) { showErr(errEl,'请填写有效的容量人数（≥1）'); return; }
-  if (_videoState.reading)       { showErr(errEl,'视频处理中，请稍候…'); return; }
-
-  const localVideoData = _videoState.cleared ? '' : _videoState.data;
-  const localVideoName = _videoState.cleared ? '' : _videoState.name;
-  const levelClass     = LEVEL_CLASS_MAP[level] || 'beginner';
-  const courses        = getCourses();
-  const isNew          = _editingCourseId == null;
-
-  if (isNew) {
-    courses.push({ id:genId(), name, emoji, teacher, date, time, room, capacity, level, levelClass, description, teacherIntro, videoUrl, localVideoData, localVideoName, duration:90, requirements:'', color:COURSE_COLORS[Math.floor(Math.random()*COURSE_COLORS.length)] });
-    saveCourses(courses); showToast('新课程场次已添加 🎉');
-  } else {
-    const idx = courses.findIndex(c => String(c.id) === String(_editingCourseId));
-    if (idx >= 0) courses[idx] = {...courses[idx], name, emoji, teacher, date, time, room, capacity, level, levelClass, description, teacherIntro, videoUrl, localVideoData, localVideoName};
-    saveCourses(courses); showToast('课程场次已更新 ✓');
+  const btn = document.getElementById('ce-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '保存中…'; }
+  const levelClass = LEVEL_CLASS_MAP[level] || 'all';
+  try {
+    if (_editingCourseId == null) {
+      await sbPost('courses', {
+        name, emoji, teacher, date, time, room: room||'', capacity,
+        level, level_class: levelClass, duration: 90,
+        description: description||'', requirements: '',
+        teacher_intro: teacherIntro||'', video_url: videoUrl||'',
+        color: COURSE_COLORS[Math.floor(Math.random()*COURSE_COLORS.length)]
+      });
+      showToast('新课程场次已添加');
+    } else {
+      await sbPatch('courses', `id=eq.${_editingCourseId}`, {
+        name, emoji, teacher, date, time, room: room||'', capacity,
+        level, level_class: levelClass,
+        description: description||'', teacher_intro: teacherIntro||'', video_url: videoUrl||''
+      });
+      showToast('课程场次已更新');
+    }
+    closeModal('courseedit');
+    renderAdmin();
+    if (currentPage === 'schedule') renderSchedule();
+  } catch(e) {
+    if (btn) { btn.disabled = false; btn.textContent = '保存'; }
+    showErr(errEl, '保存失败，请重试');
+    console.error(e);
   }
-  closeModal('courseedit');
-  renderAdmin();
-  if (currentPage === 'schedule') renderSchedule();
 }
 
-function deleteCourse(courseId) {
-  const c = getCourse(courseId); if (!c) return;
-  const related = getBookings().filter(b => String(b.courseId) === String(courseId));
-  const msg = related.length > 0
-    ? `该课程已有 ${related.length} 条预约，删除后相关预约也会移除，是否继续？`
-    : `确定要删除「${c.name}」（${fmtCourseDate(c.date)}）吗？此操作不可撤销。`;
-  if (!confirm(msg)) return;
-  saveCourses(getCourses().filter(c2 => String(c2.id) !== String(courseId)));
-  saveBookings(getBookings().filter(b => String(b.courseId) !== String(courseId)));
-  renderAdmin();
-  if (currentPage === 'schedule')   renderSchedule();
-  if (currentPage === 'mybookings') renderMine();
-  showToast(`已删除「${c.name}」${fmtCourseDate(c.date)}`);
+async function deleteCourse(courseId) {
+  try {
+    const c = await fetchCourse(courseId); if (!c) return;
+    const bkRows = await sbGet(`bookings?course_id=eq.${courseId}&select=id`);
+    const msg = bkRows.length > 0
+      ? `该课程已有 ${bkRows.length} 条预约，删除后相关预约也会移除，是否继续？`
+      : `确定要删除「${c.name}」（${fmtCourseDate(c.date)}）吗？`;
+    if (!confirm(msg)) return;
+    await sbDelete('courses', `id=eq.${courseId}`);
+    renderAdmin();
+    if (currentPage === 'schedule')   renderSchedule();
+    if (currentPage === 'mybookings') renderMine();
+    showToast(`已删除「${c.name}」`);
+  } catch(e) {
+    showToast('删除失败，请重试'); console.error(e);
+  }
+}
+
+// ── Admin: Bookings ──
+async function renderAdminBookingsHTML() {
+  const [allBookings, courses] = await Promise.all([
+    sbGet('bookings?order=created_at.desc&select=*,courses(name,date,teacher,time,room),app_users(name)'),
+    fetchCourses()
+  ]);
+  const conf = allBookings.filter(b => b.status === 'confirmed').length;
+  const canc = allBookings.filter(b => b.status === 'cancelled').length;
+  const bookedCounts = {};
+  allBookings.filter(b => b.status === 'confirmed').forEach(b => {
+    bookedCounts[b.course_id] = (bookedCounts[b.course_id] || 0) + 1;
+  });
+  const filtered = adminBookingFilter
+    ? allBookings.filter(b => b.phone && b.phone.includes(adminBookingFilter))
+    : allBookings;
+  const capRows = courses.slice().sort((a,b) => a.date.localeCompare(b.date)).map(c => {
+    const n = bookedCounts[c.id] || 0, pct = Math.round(n/c.capacity*100);
+    return `<div class="admin-booking-item"><div class="admin-booking-info">
+      <div class="admin-booking-name">${_esc(c.name)}</div>
+      <div class="admin-booking-detail">${fmtCourseDate(c.date)} · ${_esc(c.teacher)} · ${n}/${c.capacity} 人（${pct}%）</div>
+    </div></div>`;
+  }).join('');
+  const bkRows = filtered.length === 0
+    ? `<div style="text-align:center;color:var(--text2);padding:20px;font-size:0.8rem">${adminBookingFilter?'无匹配预约':'暂无预约'}</div>`
+    : filtered.map(b => {
+        const dateStr      = b.courses?.date ? fmtCourseDate(b.courses.date) : '';
+        const userName     = b.app_users?.name || b.user_name || b.phone || '未知';
+        const ts           = fmtTs(new Date(b.created_at).getTime());
+        return `
+        <div class="admin-booking-item">
+          <div class="admin-booking-info">
+            <div class="admin-booking-name">${_esc(b.courses?.name||'')} · ${dateStr}</div>
+            <div class="admin-booking-detail">${_esc(userName)} · ${b.phone||''} · ${ts}</div>
+          </div>
+          <div class="admin-item-actions">
+            <span class="status-badge status-${b.status}">${b.status==='confirmed'?'已确认':'已取消'}</span>
+            <button class="admin-toggle" onclick="adminToggleBooking('${b.id}')">
+              ${b.status==='confirmed'?'取消':'恢复'}
+            </button>
+          </div>
+        </div>`;
+      }).join('');
+  return `
+    <div class="admin-card">
+      <div class="admin-card-title">数据概览</div>
+      <div class="admin-stats">
+        <div class="admin-stat"><div class="admin-stat-num">${allBookings.length}</div><div class="admin-stat-lbl">总预约</div></div>
+        <div class="admin-stat"><div class="admin-stat-num">${conf}</div><div class="admin-stat-lbl">已确认</div></div>
+        <div class="admin-stat"><div class="admin-stat-num">${canc}</div><div class="admin-stat-lbl">已取消</div></div>
+      </div>
+    </div>
+    <div class="admin-card">
+      <div class="admin-card-title">课程容量</div>
+      ${capRows||'<div style="padding:16px;color:var(--text2);font-size:0.8rem;text-align:center">暂无课程</div>'}
+    </div>
+    <div class="admin-card">
+      <div class="admin-card-title">预约记录（${allBookings.length}）</div>
+      <div style="padding:10px 16px 4px">
+        <input class="form-input" style="font-size:0.82rem" placeholder="按手机号筛选…"
+          value="${adminBookingFilter}" oninput="adminBookingFilter=this.value; renderAdmin()">
+      </div>
+      ${bkRows}
+    </div>`;
+}
+
+async function adminToggleBooking(id) {
+  try {
+    const rows = await sbGet(`bookings?id=eq.${id}`);
+    const b = rows[0]; if (!b) return;
+    if (b.status === 'confirmed' && b.card_type === 'credit' && b.card_id) {
+      const cardRows = await sbGet(`course_cards?id=eq.${b.card_id}`);
+      if (cardRows.length) {
+        await sbPatch('course_cards', `id=eq.${b.card_id}`, { remaining_credits: cardRows[0].remaining_credits + 1 });
+      }
+    }
+    await sbPatch('bookings', `id=eq.${id}`, { status: b.status==='confirmed'?'cancelled':'confirmed' });
+    renderAdmin();
+  } catch(e) {
+    showToast('操作失败，请重试'); console.error(e);
+  }
+}
+
+// ── Admin: Cards ──
+async function renderAdminCardsHTML() {
+  const [cards, users] = await Promise.all([fetchCards(), fetchUsers()]);
+  const userMap = {};
+  users.forEach(u => { userMap[u.phone] = u; });
+  const rows = cards.length === 0
+    ? '<div style="text-align:center;color:var(--text2);padding:28px;font-size:0.8rem">暂无课卡记录</div>'
+    : cards.map(card => {
+        const st = getCardStatus(card);
+        const u  = userMap[card.phone];
+        const displayName = u ? (u.name || u.phone) : card.phone;
+        const typeLabel   = card.type === 'period' ? '期限卡' : '次数卡';
+        const detail      = card.type === 'period'
+          ? `${card.startDate} ~ ${card.endDate}`
+          : `${card.remainingCredits}/${card.totalCredits} 次`;
+        return `
+          <div class="admin-booking-item">
+            <div class="admin-booking-info">
+              <div class="admin-booking-name">${_esc(displayName)} · ${card.phone}</div>
+              <div class="admin-booking-detail">${typeLabel} · ${detail}</div>
+            </div>
+            <div class="admin-item-actions">
+              <span class="status-badge ${st.cls}">${st.text}</span>
+              <button class="admin-toggle" onclick="openCardModal('${card.id}')">编辑</button>
+              <button class="admin-toggle admin-toggle-danger" onclick="deleteCard('${card.id}')">删除</button>
+            </div>
+          </div>`;
+      }).join('');
+  return `
+    <div class="admin-card">
+      <div class="admin-card-title">
+        <span>课卡管理（${cards.length}）</span>
+        <button class="btn-add" onclick="openCardModal('')">+ 新建</button>
+      </div>
+      ${rows}
+    </div>`;
+}
+
+async function openCardModal(cardId) {
+  let card = null, existingUser = null;
+  if (cardId) {
+    try {
+      const rows = await sbGet(`course_cards?id=eq.${cardId}`);
+      if (rows.length) { card = rowToCard(rows[0]); existingUser = await fetchUserByPhone(card.phone); }
+    } catch(e) { console.error(e); }
+  }
+  const isPeriod = !card || card.type === 'period';
+  document.getElementById('modal-card-body').innerHTML = `
+    <div class="modal-body">
+      <h3 class="modal-title">${card ? '编辑课卡' : '新建课卡'}</h3>
+      <div class="form-group">
+        <label class="form-label">用户手机号</label>
+        <input id="cd-phone" class="form-input" type="tel" placeholder="请输入手机号"
+          value="${card ? card.phone : ''}" ${card ? 'readonly' : ''}
+          oninput="lookupUserForCard(this.value)">
+        <div id="cd-user-lookup" style="margin-top:6px">
+          ${existingUser ? `<span class="user-found">✓ 用户：${_esc(existingUser.name||existingUser.phone)}</span>` : ''}
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">课卡类型</label>
+        <select id="cd-type" class="form-input" onchange="toggleCardTypeFields()">
+          <option value="period" ${isPeriod?'selected':''}>期限卡（按有效期）</option>
+          <option value="credit" ${card&&card.type==='credit'?'selected':''}>次数卡（按次数）</option>
+        </select>
+      </div>
+      <div id="cd-period-fields" style="${isPeriod?'':'display:none'}">
+        <div class="form-group"><label class="form-label">开始日期</label>
+          <input id="cd-start" class="form-input" type="date" value="${card&&card.type==='period'?card.startDate:''}"></div>
+        <div class="form-group"><label class="form-label">结束日期</label>
+          <input id="cd-end" class="form-input" type="date" value="${card&&card.type==='period'?card.endDate:''}"></div>
+      </div>
+      <div id="cd-credit-fields" style="${card&&card.type==='credit'?'':'display:none'}">
+        <div class="form-group"><label class="form-label">总次数</label>
+          <input id="cd-total" class="form-input" type="number" min="1" placeholder="例：10" value="${card&&card.type==='credit'?card.totalCredits:''}"></div>
+        <div class="form-group"><label class="form-label">剩余次数</label>
+          <input id="cd-remaining" class="form-input" type="number" min="0" placeholder="例：10" value="${card&&card.type==='credit'?card.remainingCredits:''}"></div>
+      </div>
+      <div id="cd-error" class="error-msg" style="display:none"></div>
+      <button class="btn-primary" id="cd-save-btn" onclick="saveCard('${cardId||''}')">保存课卡</button>
+    </div>`;
+  openModal('card');
+}
+
+async function lookupUserForCard(phone) {
+  const el = document.getElementById('cd-user-lookup');
+  if (!el) return;
+  if (!phone || phone.length < 11) { el.innerHTML = ''; return; }
+  try {
+    const user = await fetchUserByPhone(phone);
+    el.innerHTML = user
+      ? `<span class="user-found">✓ 用户：${_esc(user.name||user.phone)}</span>`
+      : `<span class="user-not-found">该手机号未注册，保存时将自动创建用户账户</span>`;
+  } catch(e) { el.innerHTML = ''; }
+}
+
+function toggleCardTypeFields() {
+  const t = document.getElementById('cd-type').value;
+  document.getElementById('cd-period-fields').style.display = t==='period' ? '' : 'none';
+  document.getElementById('cd-credit-fields').style.display = t==='credit' ? '' : 'none';
+}
+
+async function saveCard(cardId) {
+  const phone = document.getElementById('cd-phone').value.trim();
+  const type  = document.getElementById('cd-type').value;
+  const errEl = document.getElementById('cd-error');
+  const btn   = document.getElementById('cd-save-btn');
+  if (!phone || !/^1\d{10}$/.test(phone)) { showErr(errEl,'请输入正确的手机号（11位）'); return; }
+  if (btn) { btn.disabled = true; btn.textContent = '保存中…'; }
+  try {
+    let user = await fetchUserByPhone(phone);
+    if (!user) {
+      const rows = await sbPost('app_users', { phone, name:`用户${phone.slice(-4)}` });
+      user = rowToUser(rows[0]);
+    }
+    let cardData = { user_id: user.id, phone, type };
+    if (type === 'period') {
+      const start = document.getElementById('cd-start').value;
+      const end   = document.getElementById('cd-end').value;
+      if (!start||!end) { showErr(errEl,'请填写有效期的开始和结束日期'); if(btn){btn.disabled=false;btn.textContent='保存课卡';} return; }
+      if (start > end)  { showErr(errEl,'开始日期不能晚于结束日期'); if(btn){btn.disabled=false;btn.textContent='保存课卡';} return; }
+      cardData = {...cardData, start_date:start, end_date:end};
+    } else {
+      const total     = parseInt(document.getElementById('cd-total').value, 10);
+      const remaining = parseInt(document.getElementById('cd-remaining').value, 10);
+      if (!total||total<1)               { showErr(errEl,'请输入有效的总次数（≥1）'); if(btn){btn.disabled=false;btn.textContent='保存课卡';} return; }
+      if (isNaN(remaining)||remaining<0) { showErr(errEl,'剩余次数不能为负数'); if(btn){btn.disabled=false;btn.textContent='保存课卡';} return; }
+      if (remaining > total)             { showErr(errEl,'剩余次数不能大于总次数'); if(btn){btn.disabled=false;btn.textContent='保存课卡';} return; }
+      cardData = {...cardData, total_credits:total, remaining_credits:remaining};
+    }
+    if (cardId) {
+      await sbPatch('course_cards', `id=eq.${cardId}`, cardData);
+    } else {
+      await sbPost('course_cards', cardData);
+    }
+    closeModal('card');
+    renderAdmin();
+    showToast(cardId ? '课卡已更新' : '课卡已创建');
+  } catch(e) {
+    if (btn) { btn.disabled = false; btn.textContent = '保存课卡'; }
+    showErr(errEl, '保存失败，请重试');
+    console.error(e);
+  }
+}
+
+async function deleteCard(cardId) {
+  if (!confirm('确定要删除该课卡吗？此操作不可撤销。')) return;
+  try {
+    await sbDelete('course_cards', `id=eq.${cardId}`);
+    renderAdmin(); showToast('课卡已删除');
+  } catch(e) {
+    showToast('删除失败，请重试'); console.error(e);
+  }
+}
+
+// ── Admin: Users ──
+async function renderAdminUsersHTML() {
+  const [users, allCards, allBookings] = await Promise.all([
+    fetchUsers(),
+    fetchCards(),
+    sbGet('bookings?select=id,user_id,phone')
+  ]);
+  const rows = users.map(u => {
+    const cardCnt = allCards.filter(c => c.phone === u.phone).length;
+    const bkCnt   = allBookings.filter(b => b.user_id===u.id || b.phone===u.phone).length;
+    return `
+      <div class="admin-booking-item">
+        <div class="admin-booking-info">
+          <div class="admin-booking-name">${_esc(u.name||'未命名')} · ${u.phone}</div>
+          <div class="admin-booking-detail">课卡 ${cardCnt} 张 · 预约 ${bkCnt} 条</div>
+        </div>
+        <div class="admin-item-actions">
+          <button class="admin-toggle" onclick="openEditUserModal('${u.id}','${_esc(u.name||'')}')">编辑</button>
+          <button class="admin-toggle admin-toggle-danger" onclick="deleteUser('${u.id}')">删除</button>
+        </div>
+      </div>`;
+  }).join('');
+  return `
+    <div class="admin-card">
+      <div class="admin-card-title">
+        <span>用户管理（${users.length}）</span>
+        <button class="btn-add" onclick="openCreateUserModal()">+ 创建</button>
+      </div>
+      ${rows || '<div style="text-align:center;color:var(--text2);padding:20px;font-size:0.8rem">暂无用户</div>'}
+    </div>`;
+}
+
+function openCreateUserModal() {
+  document.getElementById('modal-user-body').innerHTML = `
+    <div class="modal-body">
+      <h3 class="modal-title">创建用户</h3>
+      <div class="form-group"><label class="form-label">手机号 *</label>
+        <input id="mu-phone" class="form-input" type="tel" placeholder="请输入手机号"></div>
+      <div class="form-group"><label class="form-label">姓名</label>
+        <input id="mu-name" class="form-input" type="text" placeholder="用户姓名（可选）"></div>
+      <div id="mu-error" class="error-msg" style="display:none"></div>
+      <button class="btn-primary" id="mu-save-btn" onclick="saveUserAdmin(null)">创建</button>
+    </div>`;
+  openModal('user');
+}
+
+function openEditUserModal(userId, currentName) {
+  document.getElementById('modal-user-body').innerHTML = `
+    <div class="modal-body">
+      <h3 class="modal-title">编辑用户</h3>
+      <div class="form-group"><label class="form-label">姓名</label>
+        <input id="mu-name" class="form-input" type="text" value="${_esc(currentName||'')}"></div>
+      <div id="mu-error" class="error-msg" style="display:none"></div>
+      <button class="btn-primary" id="mu-save-btn" onclick="saveUserAdmin('${userId}')">保存</button>
+    </div>`;
+  openModal('user');
+}
+
+async function saveUserAdmin(userId) {
+  const errEl = document.getElementById('mu-error');
+  const name  = document.getElementById('mu-name').value.trim();
+  const btn   = document.getElementById('mu-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '保存中…'; }
+  try {
+    if (userId) {
+      await sbPatch('app_users', `id=eq.${userId}`, { name });
+      const session = getSession();
+      if (session && session.userId === userId) { saveSession({...session, name}); renderHeaderUser(); }
+      closeModal('user'); renderAdmin(); showToast('用户信息已更新');
+    } else {
+      const phone = document.getElementById('mu-phone').value.trim();
+      if (!phone || !/^1\d{10}$/.test(phone)) { showErr(errEl,'请输入正确的手机号（11位）'); if(btn){btn.disabled=false;btn.textContent='创建';} return; }
+      const existing = await fetchUserByPhone(phone);
+      if (existing) { showErr(errEl,'该手机号已注册'); if(btn){btn.disabled=false;btn.textContent='创建';} return; }
+      await sbPost('app_users', { phone, name: name || `用户${phone.slice(-4)}` });
+      closeModal('user'); renderAdmin(); showToast('用户已创建');
+    }
+  } catch(e) {
+    if (btn) { btn.disabled = false; btn.textContent = userId?'保存':'创建'; }
+    showErr(errEl, '操作失败，请重试'); console.error(e);
+  }
+}
+
+async function deleteUser(userId) {
+  try {
+    const rows = await sbGet(`app_users?id=eq.${userId}`);
+    const u = rows[0]; if (!u) return;
+    const [cardRows, bkRows] = await Promise.all([
+      sbGet(`course_cards?phone=eq.${encodeURIComponent(u.phone)}&select=id`),
+      sbGet(`bookings?user_id=eq.${userId}&select=id`)
+    ]);
+    if (!confirm(`确定删除用户「${u.name||u.phone}」吗？\n将同时删除 ${cardRows.length} 张课卡和 ${bkRows.length} 条预约记录，此操作不可撤销。`)) return;
+    await sbDelete('app_users', `id=eq.${userId}`);
+    const session = getSession();
+    if (session && session.userId === userId) { clearSession(); renderHeaderUser(); }
+    renderAdmin(); showToast('用户已删除');
+  } catch(e) {
+    showToast('删除失败，请重试'); console.error(e);
+  }
 }
 
 // ── Admin Auth ──
@@ -1144,7 +1212,6 @@ function closeModal(name) { document.getElementById(`modal-${name}-bg`).classLis
 
 // ===== Init =====
 function init() {
-  migrateData();
   initDateFilter();
   renderHeaderUser();
 }
