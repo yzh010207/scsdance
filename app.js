@@ -556,7 +556,7 @@ async function renderMine() {
     if (mineTab === 'cards')    content = await renderMineCards(user);
     if (mineTab === 'account')  content = renderMineAccount(user);
     const tc = document.getElementById('mine-tab-content');
-    if (tc) tc.innerHTML = content;
+    if (tc) { tc.innerHTML = content; if (mineTab === 'account') initQRCode(); }
   } catch(e) {
     const tc = document.getElementById('mine-tab-content');
     if (tc) tc.innerHTML = errorHTML('加载失败，请重试');
@@ -636,6 +636,11 @@ function renderMineAccount(user) {
         </div>
         <button class="btn-primary" onclick="saveMineProfile()">保存姓名</button>
         <button class="btn-outline" style="margin-top:10px;width:100%;display:block" onclick="logoutUser()">退出登录</button>
+      </div>
+      <div class="qr-section">
+        <div class="qr-label">扫码访问本站</div>
+        <div id="qr-canvas"></div>
+        <div class="qr-url">${_esc(location.origin + location.pathname)}</div>
       </div>
     </div>`;
 }
@@ -1239,6 +1244,20 @@ function adminLogout() { adminLoggedIn = false; renderAdmin(); showToast('已退
 // ===== Modal =====
 function openModal(name)  { document.getElementById(`modal-${name}-bg`).classList.add('open'); }
 function closeModal(name) { document.getElementById(`modal-${name}-bg`).classList.remove('open'); }
+
+// ===== QR Code =====
+function initQRCode() {
+  const el = document.getElementById('qr-canvas');
+  if (!el || typeof QRCode === 'undefined') return;
+  el.innerHTML = '';
+  new QRCode(el, {
+    text: location.href,
+    width: 168,
+    height: 168,
+    colorDark: '#0d0d0d',
+    colorLight: '#f4f2ed'
+  });
+}
 
 // ===== Init =====
 function init() {
