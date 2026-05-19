@@ -27,14 +27,18 @@
         <div class="hero-line hero-line-top"></div>
         <div class="hero-line hero-line-bottom"></div>
         <div class="hero-content">
-          <div class="hero-kicker">SOUTHAMPTON CHINESE SOCIETY</div>
+          <div class="hero-kicker">Southampton Chinese Society</div>
           <h1 class="hero-title">SCS<br><span>Dance</span></h1>
-          <p class="hero-tagline">舞动生活 &nbsp;·&nbsp; 自由表达</p>
-          <button class="btn-hero" onclick="navigate('schedule')">探索课程</button>
+          <div class="hero-subtitle">Southampton Chinese Students Dance Society</div>
+          <p class="hero-tagline">A contemporary dance community founded by Southampton Chinese students.</p>
+          <button class="btn-hero" onclick="navigate('schedule')">Explore Classes</button>
         </div>
       </div>
       <div class="about-section">
-        <div class="about-label">ABOUT US</div>
+        <div class="about-eyebrow">
+          <span class="about-year">2021</span>
+          <span class="about-label">Est. Southampton</span>
+        </div>
         <h2 class="about-heading">关于我们</h2>
         <p class="about-text">
           我们是南安普顿中国学联舞社 SCS，创立于 2021 年。舞社涵盖多个舞蹈风格，并持续举办丰富的课程、训练、演出和社交活动。我们希望为热爱舞蹈的同学提供一个专业、开放、有归属感的舞蹈空间。
@@ -42,21 +46,21 @@
         <div class="about-divider"></div>
       </div>
       <div class="home-actions">
-        <button class="home-action-card" onclick="navigate('schedule')">
-          <div class="hac-icon">📅</div>
-          <div class="hac-text">
-            <div class="hac-title">查看课程</div>
-            <div class="hac-sub">浏览所有舞蹈课程及排期</div>
-          </div>
-          <div class="hac-arrow">›</div>
+        <button class="home-action-link" onclick="navigate('schedule')">
+          <span class="hal-num">01</span>
+          <span class="hal-body">
+            <span class="hal-title">课程表</span>
+            <span class="hal-sub">浏览所有舞蹈课程及排期</span>
+          </span>
+          <span class="hal-arrow">→</span>
         </button>
-        <button class="home-action-card" onclick="navigate('mybookings')">
-          <div class="hac-icon">🎟️</div>
-          <div class="hac-text">
-            <div class="hac-title">我的预约 &amp; 课卡</div>
-            <div class="hac-sub">查看预约记录和课卡状态</div>
-          </div>
-          <div class="hac-arrow">›</div>
+        <button class="home-action-link" onclick="navigate('mybookings')">
+          <span class="hal-num">02</span>
+          <span class="hal-body">
+            <span class="hal-title">我的预约 &amp; 课卡</span>
+            <span class="hal-sub">查看预约记录和课卡状态</span>
+          </span>
+          <span class="hal-arrow">→</span>
         </button>
       </div>
     </div>
@@ -141,7 +145,6 @@
     <div class="modal slide-up" id="modal-adminlogin" onclick="event.stopPropagation()">
       <button class="modal-close" onclick="closeModal('adminlogin')">✕</button>
       <div class="modal-body">
-        <div class="modal-icon">🔐</div>
         <h3 class="modal-title">管理员登录</h3>
         <div class="form-group">
           <label class="form-label">管理员密码</label>

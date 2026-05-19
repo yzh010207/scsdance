@@ -5,6 +5,8 @@ const WEEKDAYS        = ['周日','周一','周二','周三','周四','周五','
 const ADMIN_PASSWORD  = 'admin123';
 const LEVEL_CLASS_MAP = { '初级':'beginner','中级':'intermediate','高级':'advanced','全级':'all','儿童班':'kids' };
 const COURSE_COLORS   = ['#e94560','#4a90e2','#9b59b6','#27ae60','#f39c12','#e67e22','#c0392b','#16a085','#2980b9','#8e44ad'];
+const MONTH_EN        = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const WDAY_EN         = { '周日':'Sun','周一':'Mon','周二':'Tue','周三':'Wed','周四':'Thu','周五':'Fri','周六':'Sat' };
 
 // ===== Date Helpers =====
 function getWeekday(dateStr) {
@@ -207,7 +209,6 @@ function openLoginModal(pendingCourseId) {
   _pendingBookingId = pendingCourseId || null;
   document.getElementById('modal-login-body').innerHTML = `
     <div class="modal-body">
-      <div class="modal-icon">👤</div>
       <h3 class="modal-title">登录 / 注册</h3>
       <p class="login-hint">输入手机号即可登录，首次登录自动创建账户</p>
       <div class="form-group">
@@ -294,33 +295,30 @@ function renderSchedule() {
 
   if (!filtered.length) {
     const labels = { all:'暂无课程', today:'今天没有课程', week:'本周没有课程', month:'本月没有课程' };
-    list.innerHTML = `<div class="empty-state"><div class="empty-icon">📭</div><div class="empty-text">${labels[currentDateFilter]||'暂无课程'}</div></div>`;
+    list.innerHTML = `<div class="empty-state"><div class="empty-icon">—</div><div class="empty-text">${labels[currentDateFilter]||'暂无课程'}</div><div class="empty-hint">No classes in this period</div></div>`;
     return;
   }
   list.innerHTML = filtered.map(c => {
     const booked = getBookedCount(c.id), left = c.capacity - booked, full = left <= 0;
+    const [,m,d] = c.date.split('-');
+    const wdEn = WDAY_EN[getWeekday(c.date)] || '';
     return `
-      <div class="course-card" onclick="openCourseDetail('${c.id}')">
-        <div class="course-bar" style="background:${c.color}"></div>
-        <div class="course-body">
-          <div class="course-date-badge">${fmtCourseDate(c.date)}</div>
-          <div class="course-row1">
-            <div class="course-emoji">${c.emoji}</div>
-            <div class="course-info">
-              <div class="course-name">${c.name}</div>
-              <div class="course-teacher">${c.teacher}</div>
-            </div>
-            <span class="level-badge level-${c.levelClass}">${c.level}</span>
-          </div>
-          <div class="course-meta">
-            <span class="meta-tag">🕐 ${c.time}</span>
-            <span class="meta-tag">📍 ${c.room}</span>
-            <span class="meta-tag">${c.duration||90} 分钟</span>
-          </div>
-          <div class="course-footer">
-            <span class="spots${full?' full':''}">${full?'名额已满':`余 ${left} / ${c.capacity} 位`}</span>
-            <button class="btn-book" ${full?'disabled':''} onclick="event.stopPropagation(); openBookingForm('${c.id}')">
-              ${full?'已满':'立即预约'}
+      <div class="course-row" onclick="openCourseDetail('${c.id}')">
+        <div class="cr-date">
+          <div class="cr-dn">${parseInt(d,10)}</div>
+          <div class="cr-month">${MONTH_EN[parseInt(m,10)-1]}</div>
+          <div class="cr-wday">${wdEn}</div>
+        </div>
+        <div class="cr-body">
+          <div class="cr-name">${_esc(c.name)}</div>
+          <div class="cr-meta">${_esc(c.teacher)} · ${_esc(c.time)} · ${_esc(c.room)}</div>
+        </div>
+        <div class="cr-end">
+          <span class="level-badge level-${c.levelClass}">${c.level}</span>
+          <div class="cr-book-row">
+            <span class="cr-spots${full?' cr-full':''}">${full?'已满':`余 ${left}`}</span>
+            <button class="cr-btn" ${full?'disabled':''} onclick="event.stopPropagation(); openBookingForm('${c.id}')">
+              ${full?'—':'预约'}
             </button>
           </div>
         </div>
@@ -345,29 +343,26 @@ function openCourseDetail(courseId) {
   if (!c) return;
   const booked = getBookedCount(c.id), left = c.capacity - booked, full = left <= 0;
   document.getElementById('modal-detail-body').innerHTML = `
+    ${renderVideoPlayer(c.localVideoData, c.videoUrl)}
+    <div class="detail-kicker">
+      <span class="level-badge level-${c.levelClass}">${c.level}</span>
+      <span class="detail-dur">${c.duration||90} min</span>
+    </div>
     <div class="detail-header">
-      <div class="detail-emoji">${c.emoji}</div>
-      <div class="detail-title">${c.name}</div>
-      <div class="detail-teacher">${c.teacher}</div>
-      <div class="detail-badges">
-        <span class="level-badge level-${c.levelClass}">${c.level}</span>
-        <span class="meta-tag">${c.duration||90} 分钟</span>
-      </div>
+      <div class="detail-title">${_esc(c.name)}</div>
+      <div class="detail-teacher">${_esc(c.teacher)}</div>
     </div>
     <div class="detail-meta">
-      <div class="detail-meta-row"><span class="detail-meta-label">上课日期</span><span class="detail-meta-val">${fmtCourseDate(c.date)}</span></div>
-      <div class="detail-meta-row"><span class="detail-meta-label">上课时间</span><span class="detail-meta-val">${c.time}</span></div>
-      <div class="detail-meta-row"><span class="detail-meta-label">上课地点</span><span class="detail-meta-val">${c.room}</span></div>
-      <div class="detail-meta-row"><span class="detail-meta-label">名额</span><span class="detail-meta-val">${full?'<span style="color:#e94560">名额已满</span>':`余 ${left} 位（共 ${c.capacity} 位）`}</span></div>
+      <div class="detail-meta-row"><span class="detail-meta-label">日期</span><span class="detail-meta-val">${fmtCourseDate(c.date)}</span></div>
+      <div class="detail-meta-row"><span class="detail-meta-label">时间</span><span class="detail-meta-val">${_esc(c.time)}</span></div>
+      <div class="detail-meta-row"><span class="detail-meta-label">地点</span><span class="detail-meta-val">${_esc(c.room)}</span></div>
+      <div class="detail-meta-row"><span class="detail-meta-label">名额</span><span class="detail-meta-val">${full?`<span style="color:var(--accent)">名额已满</span>`:`余 ${left} 位（共 ${c.capacity} 位）`}</span></div>
     </div>
-    ${renderVideoPlayer(c.localVideoData, c.videoUrl)}
-    <div class="detail-desc">
-      <h4>课程介绍</h4><p>${c.description||'暂无介绍'}</p>
-      ${c.teacherIntro?`<br><h4>教练介绍</h4><p>${c.teacherIntro}</p>`:''}
-      ${c.requirements ?`<br><h4>报名要求</h4><p>${c.requirements}</p>` :''}
-    </div>
+    ${c.description ? `<div class="detail-desc"><h4>课程介绍</h4><p>${_esc(c.description)}</p></div>` : ''}
+    ${c.teacherIntro ? `<div class="detail-desc"><h4>教练介绍</h4><p>${_esc(c.teacherIntro)}</p></div>` : ''}
+    ${c.requirements ? `<div class="detail-desc"><h4>报名要求</h4><p>${_esc(c.requirements)}</p></div>` : ''}
     <div class="detail-footer">
-      <button class="btn-primary" ${full?'disabled style="background:#ccc"':''} onclick="closeModal('detail'); openBookingForm('${c.id}')">
+      <button class="btn-primary" ${full?'disabled':''} onclick="closeModal('detail'); openBookingForm('${c.id}')">
         ${full?'名额已满':'立即预约'}
       </button>
     </div>`;
@@ -408,13 +403,12 @@ function openBookingForm(courseId) {
 
   document.getElementById('modal-booking-body').innerHTML = `
     <div class="modal-body">
-      <div class="modal-icon">${c.emoji}</div>
-      <h3 class="modal-title">${c.name}</h3>
+      <h3 class="modal-title">${_esc(c.name)}</h3>
       <div class="booking-session-info">
         <div class="bsi-date">${fmtCourseDate(c.date)}</div>
-        <div class="bsi-detail">${c.time} · ${c.room}</div>
+        <div class="bsi-detail">${_esc(c.time)} · ${_esc(c.room)}</div>
       </div>
-      <div class="booking-user-info">👤 ${_esc(user.name || user.phone)} · ${user.phone}</div>
+      <div class="booking-user-info">${_esc(user.name || user.phone)} &nbsp;·&nbsp; ${user.phone}</div>
       ${statusHtml}
       <div id="bk-error" class="error-msg" style="display:none"></div>
       ${canBook ? `<button class="btn-primary" onclick="submitBooking('${c.id}')">确认预约</button>` : ''}
@@ -463,13 +457,13 @@ function submitBooking(courseId) {
 
   document.getElementById('modal-booking-body').innerHTML = `
     <div class="success-state">
-      <div class="success-icon">🎉</div>
-      <div class="success-title">预约成功！</div>
-      <div class="success-sub">${c.name}<br>${fmtCourseDate(c.date)} ${c.time}<br>${c.room}</div>
-      <div class="success-card-note">${cardNote}</div>
+      <div class="success-icon">✓</div>
+      <div class="success-title">预约成功</div>
+      <div class="success-sub">${_esc(c.name)}<br>${fmtCourseDate(c.date)} ${_esc(c.time)}<br>${_esc(c.room)}</div>
+      <div class="success-card-note">${_esc(cardNote)}</div>
       <button class="btn-primary" onclick="closeModal('booking'); navigate('mybookings')">查看我的预约</button>
     </div>`;
-  showToast('预约成功 🎉');
+  showToast('预约成功');
 }
 
 function showErr(el, msg) { el.textContent = msg; el.style.display = 'block'; }
@@ -483,12 +477,11 @@ function renderMine() {
   if (!user) {
     el.innerHTML = `
       <div class="page-top"><h2 class="page-title">我的</h2></div>
-      <div class="empty-state" style="padding:60px 20px">
-        <div class="empty-icon">👤</div>
-        <div class="empty-text">请先登录</div>
-        <div class="empty-hint">登录后可查看预约记录、课卡和账户信息</div>
-        <br>
-        <button class="btn-primary" style="display:inline-block;width:auto;padding:12px 32px" onclick="openLoginModal(null)">立即登录 / 注册</button>
+      <div class="mine-login-prompt">
+        <div class="ml-icon">—</div>
+        <h3>登录查看</h3>
+        <p>登录后可查看预约记录、课卡和账户信息</p>
+        <button class="btn-primary" style="display:inline-block;width:auto;padding:12px 32px" onclick="openLoginModal(null)">登录 / 注册</button>
       </div>`;
     return;
   }
@@ -513,11 +506,11 @@ function renderMineBookings(user) {
     .slice().reverse();
 
   if (!myBookings.length) {
-    return `<div class="mine-body"><div class="empty-state" style="padding:40px 0">
-      <div class="empty-icon">🗓️</div>
+    return `<div class="mine-body"><div class="empty-state">
+      <div class="empty-icon">—</div>
       <div class="empty-text">暂无预约记录</div>
-      <div class="empty-hint">去课程表选一节课开始吧！</div>
-      <br><button class="btn-outline" onclick="navigate('schedule')">浏览课程</button>
+      <div class="empty-hint">去课程表选一节课开始吧</div>
+      <button class="btn-outline" onclick="navigate('schedule')">浏览课程</button>
     </div></div>`;
   }
   return `<div class="mine-body">${myBookings.map(b => {
@@ -526,12 +519,12 @@ function renderMineBookings(user) {
       <div class="booking-card">
         <div class="booking-header">
           <div>
-            <div class="booking-name">${b.courseEmoji} ${b.courseName}</div>
-            <div class="booking-day">${dateDisplay} · ${b.time}</div>
+            <div class="booking-name">${_esc(b.courseName)}</div>
+            <div class="booking-day">${dateDisplay} · ${_esc(b.time)}</div>
           </div>
           <span class="status-badge status-${b.status}">${b.status==='confirmed'?'已确认':'已取消'}</span>
         </div>
-        <div class="booking-meta">📍 ${b.room}<br>👨‍🏫 ${b.teacher}<br>🕐 预约于 ${fmtTs(b.createdAt)}</div>
+        <div class="booking-meta">${_esc(b.room)} · ${_esc(b.teacher)}<br>预约于 ${fmtTs(b.createdAt)}</div>
         ${b.status==='confirmed' ? `<button class="btn-cancel" onclick="cancelMyBooking('${b.id}')">取消预约</button>` : ''}
       </div>`;
   }).join('')}</div>`;
@@ -540,8 +533,8 @@ function renderMineBookings(user) {
 function renderMineCards(user) {
   const myCards = getCards().filter(c => c.phone === user.phone);
   if (!myCards.length) {
-    return `<div class="mine-body"><div class="empty-state" style="padding:40px 0">
-      <div class="empty-icon">🎟️</div>
+    return `<div class="mine-body"><div class="empty-state">
+      <div class="empty-icon">—</div>
       <div class="empty-text">暂无课卡</div>
       <div class="empty-hint">请联系管理员开通课卡后方可预约</div>
     </div></div>`;
@@ -554,7 +547,7 @@ function renderMineCards(user) {
       : `剩余 ${card.remainingCredits} / ${card.totalCredits} 次`;
     return `
       <div class="mine-card-item">
-        <div class="mine-card-icon">🎟️</div>
+        <div class="mine-card-icon">◈</div>
         <div class="mine-card-info">
           <div class="mine-card-type">${typeLabel}</div>
           <div class="mine-card-detail">${detail}</div>
@@ -565,21 +558,24 @@ function renderMineCards(user) {
 }
 
 function renderMineAccount(user) {
+  const initials = (user.name || user.phone).trim().slice(0,2).toUpperCase();
   return `
     <div class="mine-body">
       <div class="account-card">
-        <div class="account-avatar">👤</div>
+        <div class="account-avatar">${initials}</div>
         <div class="account-info">
           <div class="account-name">${_esc(user.name || '未设置姓名')}</div>
           <div class="account-phone">${user.phone}</div>
         </div>
       </div>
-      <div class="form-group">
-        <label class="form-label">修改姓名</label>
-        <input id="mine-name-input" class="form-input" type="text" placeholder="你的姓名" value="${_esc(user.name||'')}">
+      <div class="mine-form-pad">
+        <div class="form-group">
+          <label class="form-label">修改姓名</label>
+          <input id="mine-name-input" class="form-input" type="text" placeholder="你的姓名" value="${_esc(user.name||'')}">
+        </div>
+        <button class="btn-primary" onclick="saveMineProfile()">保存姓名</button>
+        <button class="btn-outline" style="margin-top:10px;width:100%;display:block" onclick="logoutUser()">退出登录</button>
       </div>
-      <button class="btn-primary" onclick="saveMineProfile()">保存姓名</button>
-      <button class="btn-outline" style="margin-top:10px;width:100%;display:block" onclick="logoutUser()">退出登录</button>
     </div>`;
 }
 
@@ -648,12 +644,12 @@ function renderAdminCoursesHTML() {
   const courses = getCourses().slice().sort((a,b) => a.date !== b.date ? a.date.localeCompare(b.date) : a.time.localeCompare(b.time));
   const rows = courses.map(c => {
     const left = c.capacity - getBookedCount(c.id);
-    let vt = c.localVideoData ? '本地视频 📹' : c.videoUrl ? '视频链接 🔗' : '暂无视频';
+    const vt = c.localVideoData ? '本地视频' : c.videoUrl ? '视频链接' : '无视频';
     return `
       <div class="admin-booking-item">
         <div class="admin-booking-info">
-          <div class="admin-booking-name">${c.emoji} ${c.name}</div>
-          <div class="admin-booking-detail">${fmtCourseDate(c.date)} · ${c.time} · ${c.teacher} · ${c.room} · 余${left}/${c.capacity} · ${vt}</div>
+          <div class="admin-booking-name">${_esc(c.name)}</div>
+          <div class="admin-booking-detail">${fmtCourseDate(c.date)} · ${_esc(c.time)} · ${_esc(c.teacher)} · ${_esc(c.room)} · 余${left}/${c.capacity} · ${vt}</div>
         </div>
         <div class="admin-item-actions">
           <button class="admin-toggle" onclick="openCourseForm('${c.id}')">编辑</button>
@@ -664,10 +660,10 @@ function renderAdminCoursesHTML() {
   return `
     <div class="admin-card">
       <div class="admin-card-title">
-        <span>🎓 课程管理（${courses.length}）</span>
-        <button class="btn-book" style="font-size:0.78rem;padding:6px 14px;border-radius:16px" onclick="openCourseForm(null)">+ 新增</button>
+        <span>课程管理（${courses.length}）</span>
+        <button class="btn-add" onclick="openCourseForm(null)">+ 新增</button>
       </div>
-      ${rows || '<div style="text-align:center;color:#aaa;padding:20px">暂无课程</div>'}
+      ${rows || '<div style="text-align:center;color:var(--text2);padding:20px;font-size:0.8rem">暂无课程</div>'}
     </div>`;
 }
 
@@ -683,13 +679,13 @@ function renderAdminBookingsHTML() {
   const capRows = getCourses().slice().sort((a,b) => a.date.localeCompare(b.date)).map(c => {
     const n = getBookedCount(c.id), pct = Math.round(n/c.capacity*100);
     return `<div class="admin-booking-item"><div class="admin-booking-info">
-      <div class="admin-booking-name">${c.emoji} ${c.name}</div>
-      <div class="admin-booking-detail">${fmtCourseDate(c.date)} · ${c.teacher} · ${n}/${c.capacity} 人（${pct}%）</div>
+      <div class="admin-booking-name">${_esc(c.name)}</div>
+      <div class="admin-booking-detail">${fmtCourseDate(c.date)} · ${_esc(c.teacher)} · ${n}/${c.capacity} 人（${pct}%）</div>
     </div></div>`;
   }).join('');
 
   const bkRows = filtered.length === 0
-    ? `<div style="text-align:center;color:#aaa;padding:20px">${adminBookingFilter?'无匹配预约':'暂无预约'}</div>`
+    ? `<div style="text-align:center;color:var(--text2);padding:20px;font-size:0.8rem">${adminBookingFilter?'无匹配预约':'暂无预约'}</div>`
     : filtered.slice().reverse().map(b => {
         const dateDisplay = b.date ? fmtCourseDate(b.date) : (b.day||'');
         const user = findUserByPhone(b.phone);
@@ -697,12 +693,13 @@ function renderAdminBookingsHTML() {
         return `
         <div class="admin-booking-item">
           <div class="admin-booking-info">
-            <div class="admin-booking-name">${b.courseEmoji||''} ${b.courseName} · ${dateDisplay}</div>
-            <div class="admin-booking-detail">${userName} · ${b.phone||''} · ${fmtTs(b.createdAt)}</div>
+            <div class="admin-booking-name">${_esc(b.courseName)} · ${dateDisplay}</div>
+            <div class="admin-booking-detail">${_esc(userName)} · ${b.phone||''} · ${fmtTs(b.createdAt)}</div>
           </div>
           <div class="admin-item-actions">
-            <button class="admin-toggle status-${b.status}" onclick="adminToggleBooking('${b.id}')">
-              ${b.status==='confirmed'?'已确认':'已取消'}
+            <span class="status-badge status-${b.status}">${b.status==='confirmed'?'已确认':'已取消'}</span>
+            <button class="admin-toggle" onclick="adminToggleBooking('${b.id}')">
+              ${b.status==='confirmed'?'取消':'恢复'}
             </button>
           </div>
         </div>`;
@@ -710,7 +707,7 @@ function renderAdminBookingsHTML() {
 
   return `
     <div class="admin-card">
-      <div class="admin-card-title">📊 数据概览</div>
+      <div class="admin-card-title">数据概览</div>
       <div class="admin-stats">
         <div class="admin-stat"><div class="admin-stat-num">${all.length}</div><div class="admin-stat-lbl">总预约</div></div>
         <div class="admin-stat"><div class="admin-stat-num">${conf.length}</div><div class="admin-stat-lbl">已确认</div></div>
@@ -718,15 +715,15 @@ function renderAdminBookingsHTML() {
       </div>
     </div>
     <div class="admin-card">
-      <div class="admin-card-title">📋 课程容量</div>
+      <div class="admin-card-title">课程容量</div>
       ${capRows}
     </div>
     <div class="admin-card">
-      <div class="admin-card-title">
-        <span>📝 预约记录（${all.length}）</span>
+      <div class="admin-card-title">预约记录（${all.length}）</div>
+      <div style="padding:10px 16px 4px">
+        <input class="form-input" style="font-size:0.82rem" placeholder="按手机号筛选…"
+          value="${adminBookingFilter}" oninput="adminBookingFilter=this.value; renderAdmin()">
       </div>
-      <input class="form-input" style="margin-bottom:10px;font-size:0.82rem" placeholder="按手机号筛选…"
-        value="${adminBookingFilter}" oninput="adminBookingFilter=this.value; renderAdmin()">
       ${bkRows}
     </div>`;
 }
@@ -748,7 +745,7 @@ function adminToggleBooking(id) {
 function renderAdminCardsHTML() {
   const cards = getCards();
   const rows = cards.length === 0
-    ? '<div style="text-align:center;color:#aaa;padding:28px 0">暂无课卡记录</div>'
+    ? '<div style="text-align:center;color:var(--text2);padding:28px;font-size:0.8rem">暂无课卡记录</div>'
     : cards.map(card => {
         const st = getCardStatus(card);
         const user = findUserByPhone(card.phone);
@@ -772,8 +769,8 @@ function renderAdminCardsHTML() {
   return `
     <div class="admin-card">
       <div class="admin-card-title">
-        <span>🎟️ 课卡管理（${cards.length}）</span>
-        <button class="btn-book" style="font-size:0.78rem;padding:6px 14px;border-radius:16px" onclick="openCardModal('')">+ 新建</button>
+        <span>课卡管理（${cards.length}）</span>
+        <button class="btn-add" onclick="openCardModal('')">+ 新建</button>
       </div>
       ${rows}
     </div>`;
@@ -913,10 +910,10 @@ function renderAdminUsersHTML() {
   return `
     <div class="admin-card">
       <div class="admin-card-title">
-        <span>👥 用户管理（${users.length}）</span>
-        <button class="btn-book" style="font-size:0.78rem;padding:6px 14px;border-radius:16px" onclick="openCreateUserModal()">+ 创建用户</button>
+        <span>用户管理（${users.length}）</span>
+        <button class="btn-add" onclick="openCreateUserModal()">+ 创建</button>
       </div>
-      ${rows || '<div style="text-align:center;color:#aaa;padding:20px">暂无用户</div>'}
+      ${rows || '<div style="text-align:center;color:var(--text2);padding:20px;font-size:0.8rem">暂无用户</div>'}
     </div>`;
 }
 
