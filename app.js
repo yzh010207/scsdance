@@ -805,13 +805,13 @@ async function handleVideoUpload(input) {
       headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`, 'Content-Type': file.type, 'x-upsert': 'true' },
       body: file
     });
-    if (!r.ok) { const t = await r.text(); throw new Error(t); }
+    if (!r.ok) { const t = await r.text(); throw new Error(`${r.status}: ${t}`); }
     const publicUrl = `${SB_URL}/storage/v1/object/public/course-videos/${path}`;
     if (urlEl)    urlEl.value = publicUrl;
     if (statusEl) statusEl.textContent = `✓ 上传成功`;
     input.value = '';
   } catch(e) {
-    if (statusEl) statusEl.textContent = '上传失败，请检查 Supabase Storage 配置';
+    if (statusEl) statusEl.textContent = `上传失败：${e.message}`;
     console.error(e);
   }
 }
