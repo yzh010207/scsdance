@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node --check app.js)",
+      "Bash(node --check /Users/p_yzh/scs-dance/app.js)"
+    ]
+  }
+}
