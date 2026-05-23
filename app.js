@@ -197,6 +197,21 @@ function isWithinCancelDeadline(dateStr, timeStr) {
   if (!start) return false;
   return Date.now() >= start.getTime() - 2 * 60 * 60 * 1000;
 }
+function parseCourseEndTime(dateStr, timeStr) {
+  const parts = (timeStr || '').split(/[–\-]/);
+  const endStr = (parts[1] || '').trim();
+  const m = endStr.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m || !dateStr) return null;
+  const [y, mo, d] = dateStr.split('-').map(Number);
+  return new Date(y, mo - 1, d, +m[1], +m[2], 0);
+}
+function isCourseOver(dateStr, timeStr) {
+  const today = todayIso();
+  if (dateStr < today) return true;
+  if (dateStr > today) return false;
+  const end = parseCourseEndTime(dateStr, timeStr);
+  return end ? Date.now() >= end.getTime() : false;
+}
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
 function showErr(el, msg) { if (el) { el.textContent = msg; el.style.display = 'block'; } }
 
@@ -926,8 +941,8 @@ async function renderAdminBookingsHTML() {
   });
   const today = todayIso();
   const sorted = courses.slice().sort((a,b) => a.date.localeCompare(b.date));
-  const upcomingCourses = sorted.filter(c => c.date >= today);
-  const pastCourses     = sorted.filter(c => c.date <  today).reverse();
+  const pastCourses     = sorted.filter(c => isCourseOver(c.date, c.time)).reverse();
+  const upcomingCourses = sorted.filter(c => !isCourseOver(c.date, c.time));
   function courseRow(c) {
     const n = bookedCounts[c.id] || 0, pct = Math.round(n/c.capacity*100);
     return `<div class="admin-booking-item admin-course-row" onclick="openCourseBookings('${c.id}')">
