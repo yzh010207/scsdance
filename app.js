@@ -366,7 +366,7 @@ async function renderSchedule() {
   try {
     const [courses, bookedCounts] = await Promise.all([fetchCourses(), fetchBookedCounts()]);
     const filtered = courses
-      .filter(c => matchesDateFilter(c.date, currentDateFilter))
+      .filter(c => !isCourseOver(c.date, c.time) && matchesDateFilter(c.date, currentDateFilter))
       .sort((a,b) => a.date !== b.date ? a.date.localeCompare(b.date) : a.time.localeCompare(b.time));
 
     if (!filtered.length) {
@@ -760,7 +760,9 @@ async function renderAdmin() {
 // ── Admin: Courses ──
 async function renderAdminCoursesHTML() {
   const [courses, bookedCounts] = await Promise.all([fetchCourses(), fetchBookedCounts()]);
-  const sorted = courses.slice().sort((a,b) => a.date !== b.date ? a.date.localeCompare(b.date) : a.time.localeCompare(b.time));
+  const sorted = courses
+    .filter(c => !isCourseOver(c.date, c.time))
+    .sort((a,b) => a.date !== b.date ? a.date.localeCompare(b.date) : a.time.localeCompare(b.time));
   const rows = sorted.map(c => {
     const left = c.capacity - (bookedCounts[c.id] || 0);
     const vt   = c.videoUrl ? '视频链接' : '无视频';
@@ -779,7 +781,7 @@ async function renderAdminCoursesHTML() {
   return `
     <div class="admin-card">
       <div class="admin-card-title">
-        <span>课程管理（${courses.length}）</span>
+        <span>课程管理（${sorted.length}）</span>
         <button class="btn-add" onclick="openCourseForm(null)">+ 新增</button>
       </div>
       ${rows || '<div style="text-align:center;color:var(--text2);padding:20px;font-size:0.8rem">暂无课程，点击新增添加</div>'}
