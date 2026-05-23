@@ -1283,6 +1283,21 @@ textarea.form-input { resize: vertical; min-height: 80px; line-height: 1.7; }
 .admin-course-row:hover {
   background: rgba(0,0,0,0.03);
 }
+#ptr-indicator {
+  position: fixed;
+  top: var(--header-h);
+  left: 0; right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 44px;
+  font-size: 0.78rem;
+  color: var(--text2);
+  transform: translateY(-44px);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 90;
+}
 .bulk-user-list {
   max-height: 240px;
   overflow-y: auto;

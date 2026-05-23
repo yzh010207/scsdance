@@ -158,9 +158,12 @@ let _editingCourseId   = null;
 let _pendingBookingId  = null;
 
 // ===== Session (localStorage only — no course/card/booking data) =====
-function getSession()    { const r = localStorage.getItem('scs_session'); return r ? JSON.parse(r) : null; }
-function saveSession(s)  { localStorage.setItem('scs_session', JSON.stringify(s)); }
-function clearSession()  { localStorage.removeItem('scs_session'); }
+function getSession()        { const r = localStorage.getItem('scs_session'); return r ? JSON.parse(r) : null; }
+function saveSession(s)      { localStorage.setItem('scs_session', JSON.stringify(s)); }
+function clearSession()      { localStorage.removeItem('scs_session'); }
+function getAdminSession()   { const r = sessionStorage.getItem('scs_admin'); return r ? JSON.parse(r) : null; }
+function saveAdminSession(s) { sessionStorage.setItem('scs_admin', JSON.stringify(s)); }
+function clearAdminSession() { sessionStorage.removeItem('scs_admin'); }
 
 // ===== Utilities =====
 function _esc(str) {
@@ -420,6 +423,42 @@ function initDateFilter() {
     btn.classList.add('active');
     currentDateFilter = btn.dataset.day;
     renderSchedule();
+  });
+}
+
+function refreshCurrentPage() {
+  if (currentPage === 'schedule')   renderSchedule();
+  if (currentPage === 'mybookings') renderMine();
+  if (currentPage === 'admin')      renderAdmin();
+}
+
+function initPullToRefresh() {
+  let startY = 0, pulling = false, dist = 0;
+  const el  = document.getElementById('ptr-indicator');
+  const txt = document.getElementById('ptr-text');
+  const THRESHOLD = 65;
+  document.addEventListener('touchstart', e => {
+    if (window.scrollY === 0 && currentPage !== 'home') {
+      startY = e.touches[0].clientY; pulling = true;
+    }
+  }, { passive: true });
+  document.addEventListener('touchmove', e => {
+    if (!pulling) return;
+    dist = e.touches[0].clientY - startY;
+    if (dist <= 0) { dist = 0; return; }
+    const ty = Math.min(dist * 0.45, 44) - 44;
+    el.style.transform = `translateY(${ty}px)`;
+    el.style.opacity   = Math.min(dist / THRESHOLD, 1);
+    txt.textContent    = dist >= THRESHOLD ? '松开刷新' : '下拉刷新';
+  }, { passive: true });
+  document.addEventListener('touchend', () => {
+    if (!pulling) return;
+    pulling = false;
+    const triggered = dist >= THRESHOLD;
+    el.style.transform = 'translateY(-44px)';
+    el.style.opacity   = '0';
+    dist = 0; txt.textContent = '下拉刷新';
+    if (triggered) { refreshCurrentPage(); showToast('已刷新'); }
   });
 }
 
@@ -1430,11 +1469,13 @@ function adminLogin() {
   const pwd = document.getElementById('admin-pwd').value;
   if (pwd === ADMIN_PASSWORD) {
     adminLoggedIn = true; adminRole = 'admin';
+    saveAdminSession({ role: 'admin' });
     document.getElementById('admin-pwd').value = '';
     document.getElementById('admin-login-err').style.display = 'none';
     closeModal('adminlogin'); renderAdmin(); showToast('已登录管理员账户');
   } else if (pwd === COACH_PASSWORD) {
     adminLoggedIn = true; adminRole = 'coach';
+    saveAdminSession({ role: 'coach' });
     document.getElementById('admin-pwd').value = '';
     document.getElementById('admin-login-err').style.display = 'none';
     closeModal('adminlogin'); renderAdmin(); showToast('已登录教练账户');
@@ -1442,7 +1483,7 @@ function adminLogin() {
     document.getElementById('admin-login-err').style.display = 'block';
   }
 }
-function adminLogout() { adminLoggedIn = false; adminRole = 'admin'; renderAdmin(); showToast('已退出'); }
+function adminLogout() { adminLoggedIn = false; adminRole = 'admin'; clearAdminSession(); renderAdmin(); showToast('已退出'); }
 
 // ===== Modal =====
 function openModal(name)  { document.getElementById(`modal-${name}-bg`).classList.add('open'); }
@@ -1469,7 +1510,10 @@ function initQRCode() {
 
 // ===== Init =====
 function init() {
+  const savedAdmin = getAdminSession();
+  if (savedAdmin) { adminLoggedIn = true; adminRole = savedAdmin.role; }
   initDateFilter();
+  initPullToRefresh();
   renderHeaderUser();
 }
 document.addEventListener('DOMContentLoaded', init);
