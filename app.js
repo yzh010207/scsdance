@@ -932,6 +932,7 @@ async function deleteCourse(courseId) {
       : `确定要删除「${c.name}」（${fmtCourseDate(c.date)}）吗？`;
     if (!confirm(msg)) return;
     await sbDelete('courses', `id=eq.${courseId}`);
+    closeModal('coursebookings');
     renderAdmin();
     if (currentPage === 'schedule')   renderSchedule();
     if (currentPage === 'mybookings') renderMine();
@@ -1043,6 +1044,7 @@ async function openCourseBookings(courseId) {
           <div class="admin-stat"><div class="admin-stat-num">${bookings.length-conf}</div><div class="admin-stat-lbl">已取消</div></div>
         </div>
         ${rows}
+        <button class="btn-outline" style="margin-top:20px;width:100%;color:#c0392b;border-color:#c0392b" onclick="deleteCourse('${c.id}')">删除该课程记录</button>
       </div>`;
   } catch(e) {
     el.innerHTML = errorHTML('加载失败，请重试');
