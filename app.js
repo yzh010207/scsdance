@@ -1102,7 +1102,10 @@ async function renderAdminCardsHTML() {
     <div class="admin-card">
       <div class="admin-card-title">
         <span>课卡管理（${cards.length}）</span>
-        <button class="btn-add" onclick="openCardModal('')">+ 新建</button>
+        <div style="display:flex;gap:8px">
+          <button class="btn-add" onclick="openBulkCardModal()">批量发放</button>
+          <button class="btn-add" onclick="openCardModal('')">+ 新建</button>
+        </div>
       </div>
       ${rows}
     </div>`;
@@ -1222,6 +1225,102 @@ async function deleteCard(cardId) {
     renderAdmin(); showToast('课卡已删除');
   } catch(e) {
     showToast('删除失败，请重试'); console.error(e);
+  }
+}
+
+// ── Admin: Bulk Card Issuance ──
+async function openBulkCardModal() {
+  openModal('bulkcard');
+  const el = document.getElementById('modal-bulkcard-body');
+  el.innerHTML = '<div style="padding:48px;text-align:center;color:var(--text2)">加载中…</div>';
+  const users = await fetchUsers();
+  el.innerHTML = `
+    <div class="modal-body">
+      <h3 class="modal-title">批量发放课卡</h3>
+      <div class="form-group"><label class="form-label">课卡类型</label>
+        <select id="bc-type" class="form-input" onchange="toggleBulkCardTypeFields()">
+          <option value="period">期限卡（按有效期）</option>
+          <option value="credit">次数卡（按次数）</option>
+        </select></div>
+      <div id="bc-period-fields">
+        <div class="form-group"><label class="form-label">开始日期</label>
+          <input id="bc-start" class="form-input" type="date"></div>
+        <div class="form-group"><label class="form-label">结束日期</label>
+          <input id="bc-end" class="form-input" type="date"></div>
+      </div>
+      <div id="bc-credit-fields" style="display:none">
+        <div class="form-group"><label class="form-label">总次数</label>
+          <input id="bc-total" class="form-input" type="number" min="1" placeholder="例：10"></div>
+      </div>
+      <div class="form-group">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <label class="form-label" style="margin:0">选择用户</label>
+          <button class="btn-outline" style="padding:4px 10px;font-size:0.78rem" onclick="toggleSelectAllUsers()">全选 / 取消</button>
+        </div>
+        <div class="bulk-user-list" id="bc-user-list">
+          ${users.length === 0
+            ? '<div style="color:var(--text2);font-size:0.8rem;padding:12px 0">暂无用户</div>'
+            : users.map(u => `
+              <label class="bulk-user-item">
+                <input type="checkbox" class="bc-user-check" value="${_esc(u.phone)}" data-uid="${_esc(u.id)}">
+                <span class="bulk-user-name">${_esc(u.name || u.phone)}</span>
+                <span class="bulk-user-phone">${_esc(u.phone)}</span>
+              </label>`).join('')}
+        </div>
+      </div>
+      <div id="bc-error" class="error-msg" style="display:none"></div>
+      <button class="btn-primary" id="bc-save-btn" onclick="issueBulkCards()">发放课卡</button>
+    </div>`;
+}
+
+function toggleBulkCardTypeFields() {
+  const isPeriod = document.getElementById('bc-type').value === 'period';
+  document.getElementById('bc-period-fields').style.display = isPeriod ? '' : 'none';
+  document.getElementById('bc-credit-fields').style.display = isPeriod ? 'none' : '';
+}
+
+function toggleSelectAllUsers() {
+  const boxes = document.querySelectorAll('.bc-user-check');
+  const allChecked = [...boxes].every(b => b.checked);
+  boxes.forEach(b => { b.checked = !allChecked; });
+}
+
+async function issueBulkCards() {
+  const type    = document.getElementById('bc-type').value;
+  const errEl   = document.getElementById('bc-error');
+  const btn     = document.getElementById('bc-save-btn');
+  const checked = [...document.querySelectorAll('.bc-user-check:checked')];
+  errEl.style.display = 'none';
+  if (checked.length === 0) { showErr(errEl, '请至少选择一位用户'); return; }
+  let cardBase = { type };
+  if (type === 'period') {
+    const start = document.getElementById('bc-start').value;
+    const end   = document.getElementById('bc-end').value;
+    if (!start || !end)  { showErr(errEl, '请填写有效期的开始和结束日期'); return; }
+    if (start > end)     { showErr(errEl, '开始日期不能晚于结束日期'); return; }
+    cardBase = { ...cardBase, start_date: start, end_date: end };
+  } else {
+    const total = parseInt(document.getElementById('bc-total').value, 10);
+    if (!total || total < 1) { showErr(errEl, '请输入有效的总次数（≥1）'); return; }
+    cardBase = { ...cardBase, total_credits: total, remaining_credits: total };
+  }
+  btn.disabled = true; btn.textContent = '发放中…';
+  try {
+    const usersData = await fetchUsers();
+    const userMap = {};
+    usersData.forEach(u => { userMap[u.phone] = u; });
+    await Promise.all(checked.map(box => {
+      const phone = box.value;
+      const user  = userMap[phone];
+      return sbPost('course_cards', { ...cardBase, phone, user_id: user?.id || null });
+    }));
+    closeModal('bulkcard');
+    renderAdmin();
+    showToast(`已为 ${checked.length} 位用户发放课卡`);
+  } catch(e) {
+    btn.disabled = false; btn.textContent = '发放课卡';
+    showErr(errEl, '发放失败，请重试');
+    console.error(e);
   }
 }
 
