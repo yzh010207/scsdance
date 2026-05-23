@@ -1268,3 +1268,18 @@ textarea.form-input { resize: vertical; min-height: 80px; line-height: 1.7; }
   word-break: break-all;
   text-align: center;
 }
+
+.bk-cancel-policy {
+  font-size: 0.78rem;
+  color: var(--text2);
+  margin: 8px 0 4px;
+  padding: 6px 10px;
+  background: rgba(0,0,0,0.04);
+  border-radius: 6px;
+}
+.admin-course-row {
+  cursor: pointer;
+}
+.admin-course-row:hover {
+  background: rgba(0,0,0,0.03);
+}

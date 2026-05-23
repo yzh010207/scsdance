@@ -2,7 +2,8 @@
 
 // ===== Constants =====
 const WEEKDAYS        = ['周日','周一','周二','周三','周四','周五','周六'];
-const ADMIN_PASSWORD  = 'admin123';
+const ADMIN_PASSWORD  = 'scs123123';
+const COACH_PASSWORD  = 'woshijiaolian';
 const LEVEL_CLASS_MAP = { '初级':'beginner','中级':'intermediate','高级':'advanced','全级':'all','儿童班':'kids' };
 const COURSE_COLORS   = ['#e94560','#4a90e2','#9b59b6','#27ae60','#f39c12','#e67e22','#c0392b','#16a085','#2980b9','#8e44ad'];
 const MONTH_EN        = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -148,6 +149,7 @@ function relDate(days) {
 let currentPage        = 'home';
 let currentDateFilter  = 'all';
 let adminLoggedIn      = false;
+let adminRole          = 'admin'; // 'admin' | 'coach'
 let adminTab           = 'bookings';
 let adminBookingFilter = '';
 let mineTab            = 'bookings';
@@ -181,6 +183,18 @@ function matchesDateFilter(dateStr, filter) {
 function fmtTs(ts) {
   const d = new Date(ts);
   return `${d.getMonth()+1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2,'0')}`;
+}
+function parseCourseStartTime(dateStr, timeStr) {
+  const startStr = (timeStr || '').split(/[–\-]/)[0].trim();
+  const m = startStr.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m || !dateStr) return null;
+  const [y, mo, d] = dateStr.split('-').map(Number);
+  return new Date(y, mo - 1, d, +m[1], +m[2], 0);
+}
+function isWithinCancelDeadline(dateStr, timeStr) {
+  const start = parseCourseStartTime(dateStr, timeStr);
+  if (!start) return false;
+  return Date.now() >= start.getTime() - 2 * 60 * 60 * 1000;
 }
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
 function showErr(el, msg) { if (el) { el.textContent = msg; el.style.display = 'block'; } }
@@ -464,6 +478,7 @@ async function openBookingForm(courseId) {
         </div>
         <div class="booking-user-info">${_esc(user.name || user.phone)} &nbsp;·&nbsp; ${user.phone}</div>
         ${statusHtml}
+        <div class="bk-cancel-policy">开课前 2 小时不可取消预约</div>
         <div id="bk-error" class="error-msg" style="display:none"></div>
         ${canBook ? `<button class="btn-primary" id="bk-confirm-btn" onclick="submitBooking('${c.id}')">确认预约</button>` : ''}
         <button class="btn-outline" style="margin-top:10px;width:100%;display:block" onclick="closeModal('booking')">关闭</button>
@@ -663,8 +678,12 @@ async function saveMineProfile() {
 async function cancelMyBooking(id) {
   if (!confirm('确定要取消该预约吗？')) return;
   try {
-    const rows = await sbGet(`bookings?id=eq.${id}`);
+    const rows = await sbGet(`bookings?id=eq.${id}&select=*,courses(date,time)`);
     const b = rows[0]; if (!b) return;
+    if (isWithinCancelDeadline(b.courses?.date, b.courses?.time)) {
+      showToast('开课前 2 小时内不可取消预约');
+      return;
+    }
     let toastMsg = '预约已取消';
     if (b.card_type === 'credit' && b.card_id) {
       const cardRows = await sbGet(`course_cards?id=eq.${b.card_id}`);
@@ -696,20 +715,23 @@ async function renderAdmin() {
       </div>`;
     return;
   }
-  el.innerHTML = `
-    <div class="admin-tabs">
-      <button class="admin-tab ${adminTab==='courses' ?'active':''}" onclick="switchAdminTab('courses')">课程</button>
+  const isCoach = adminRole === 'coach';
+  if (isCoach) adminTab = 'courses';
+  const tabsHTML = isCoach
+    ? `<button class="admin-tab active">课程</button>`
+    : `<button class="admin-tab ${adminTab==='courses' ?'active':''}" onclick="switchAdminTab('courses')">课程</button>
       <button class="admin-tab ${adminTab==='bookings'?'active':''}" onclick="switchAdminTab('bookings')">预约</button>
       <button class="admin-tab ${adminTab==='cards'   ?'active':''}" onclick="switchAdminTab('cards')">课卡</button>
-      <button class="admin-tab ${adminTab==='users'   ?'active':''}" onclick="switchAdminTab('users')">用户</button>
-    </div>
+      <button class="admin-tab ${adminTab==='users'   ?'active':''}" onclick="switchAdminTab('users')">用户</button>`;
+  el.innerHTML = `
+    <div class="admin-tabs">${tabsHTML}</div>
     <div class="admin-body" id="admin-tab-body">${loadingHTML()}</div>`;
   try {
     let content = '';
-    if (adminTab === 'courses')  content = await renderAdminCoursesHTML();
-    if (adminTab === 'bookings') content = await renderAdminBookingsHTML();
-    if (adminTab === 'cards')    content = await renderAdminCardsHTML();
-    if (adminTab === 'users')    content = await renderAdminUsersHTML();
+    if (adminTab === 'courses')            content = await renderAdminCoursesHTML();
+    if (adminTab === 'bookings' && !isCoach) content = await renderAdminBookingsHTML();
+    if (adminTab === 'cards'    && !isCoach) content = await renderAdminCardsHTML();
+    if (adminTab === 'users'    && !isCoach) content = await renderAdminUsersHTML();
     const body = document.getElementById('admin-tab-body');
     if (body) body.innerHTML = content + `<button class="btn-logout" onclick="adminLogout()">退出管理员</button>`;
   } catch(e) {
@@ -901,56 +923,36 @@ async function renderAdminBookingsHTML() {
   allBookings.filter(b => b.status === 'confirmed').forEach(b => {
     bookedCounts[b.course_id] = (bookedCounts[b.course_id] || 0) + 1;
   });
-  const filtered = adminBookingFilter
-    ? allBookings.filter(b => b.phone && b.phone.includes(adminBookingFilter))
-    : allBookings;
-  const capRows = courses.slice().sort((a,b) => a.date.localeCompare(b.date)).map(c => {
+  const today = todayIso();
+  const sorted = courses.slice().sort((a,b) => a.date.localeCompare(b.date));
+  const upcomingCourses = sorted.filter(c => c.date >= today);
+  const pastCourses     = sorted.filter(c => c.date <  today).reverse();
+  function courseRow(c) {
     const n = bookedCounts[c.id] || 0, pct = Math.round(n/c.capacity*100);
-    return `<div class="admin-booking-item"><div class="admin-booking-info">
-      <div class="admin-booking-name">${_esc(c.name)}</div>
-      <div class="admin-booking-detail">${fmtCourseDate(c.date)} · ${_esc(c.teacher)} · ${n}/${c.capacity} 人（${pct}%）</div>
-    </div></div>`;
-  }).join('');
-  const bkRows = filtered.length === 0
-    ? `<div style="text-align:center;color:var(--text2);padding:20px;font-size:0.8rem">${adminBookingFilter?'无匹配预约':'暂无预约'}</div>`
-    : filtered.map(b => {
-        const dateStr      = b.courses?.date ? fmtCourseDate(b.courses.date) : '';
-        const userName     = b.app_users?.name || b.user_name || b.phone || '未知';
-        const ts           = fmtTs(new Date(b.created_at).getTime());
-        return `
-        <div class="admin-booking-item">
-          <div class="admin-booking-info">
-            <div class="admin-booking-name">${_esc(b.courses?.name||'')} · ${dateStr}</div>
-            <div class="admin-booking-detail">${_esc(userName)} · ${b.phone||''} · ${ts}</div>
-          </div>
-          <div class="admin-item-actions">
-            <span class="status-badge status-${b.status}">${b.status==='confirmed'?'已确认':'已取消'}</span>
-            <button class="admin-toggle" onclick="adminToggleBooking('${b.id}')">
-              ${b.status==='confirmed'?'取消':'恢复'}
-            </button>
-          </div>
-        </div>`;
-      }).join('');
+    return `<div class="admin-booking-item admin-course-row" onclick="openCourseBookings('${c.id}')">
+      <div class="admin-booking-info">
+        <div class="admin-booking-name">${_esc(c.name)}</div>
+        <div class="admin-booking-detail">${fmtCourseDate(c.date)} · ${_esc(c.teacher)} · ${n}/${c.capacity} 人（${pct}%）</div>
+      </div>
+      <div class="admin-item-actions"><span style="color:var(--text2);font-size:0.8rem">查看 →</span></div>
+    </div>`;
+  }
   return `
     <div class="admin-card">
-      <div class="admin-card-title">数据概览</div>
+      <div class="admin-card-title">课程预约</div>
+      ${upcomingCourses.map(courseRow).join('') || '<div style="padding:16px;color:var(--text2);font-size:0.8rem;text-align:center">暂无即将开始的课程</div>'}
+    </div>
+    <div class="admin-card">
+      <div class="admin-card-title">历史课程</div>
+      ${pastCourses.map(courseRow).join('') || '<div style="padding:16px;color:var(--text2);font-size:0.8rem;text-align:center">暂无历史课程</div>'}
+    </div>
+    <div class="admin-card">
+      <div class="admin-card-title">数据总览</div>
       <div class="admin-stats">
         <div class="admin-stat"><div class="admin-stat-num">${allBookings.length}</div><div class="admin-stat-lbl">总预约</div></div>
         <div class="admin-stat"><div class="admin-stat-num">${conf}</div><div class="admin-stat-lbl">已确认</div></div>
         <div class="admin-stat"><div class="admin-stat-num">${canc}</div><div class="admin-stat-lbl">已取消</div></div>
       </div>
-    </div>
-    <div class="admin-card">
-      <div class="admin-card-title">课程容量</div>
-      ${capRows||'<div style="padding:16px;color:var(--text2);font-size:0.8rem;text-align:center">暂无课程</div>'}
-    </div>
-    <div class="admin-card">
-      <div class="admin-card-title">预约记录（${allBookings.length}）</div>
-      <div style="padding:10px 16px 4px">
-        <input class="form-input" style="font-size:0.82rem" placeholder="按手机号筛选…"
-          value="${adminBookingFilter}" oninput="adminBookingFilter=this.value; renderAdmin()">
-      </div>
-      ${bkRows}
     </div>`;
 }
 
@@ -965,6 +967,71 @@ async function adminToggleBooking(id) {
       }
     }
     await sbPatch('bookings', `id=eq.${id}`, { status: b.status==='confirmed'?'cancelled':'confirmed' });
+    renderAdmin();
+  } catch(e) {
+    showToast('操作失败，请重试'); console.error(e);
+  }
+}
+
+async function openCourseBookings(courseId) {
+  openModal('coursebookings');
+  const el = document.getElementById('modal-coursebookings-body');
+  el.innerHTML = '<div style="padding:48px;text-align:center;color:var(--text2)">加载中…</div>';
+  try {
+    const [c, bookings] = await Promise.all([
+      fetchCourse(courseId),
+      sbGet(`bookings?course_id=eq.${courseId}&order=created_at.desc&select=*,app_users(name)`)
+    ]);
+    if (!c) { el.innerHTML = errorHTML('课程不存在'); return; }
+    const conf = bookings.filter(b => b.status === 'confirmed').length;
+    const rows = bookings.length === 0
+      ? '<div style="text-align:center;color:var(--text2);padding:20px;font-size:0.8rem">暂无预约记录</div>'
+      : bookings.map(b => {
+          const userName = b.app_users?.name || b.user_name || b.phone || '未知';
+          const ts = fmtTs(new Date(b.created_at).getTime());
+          return `
+            <div class="admin-booking-item">
+              <div class="admin-booking-info">
+                <div class="admin-booking-name">${_esc(userName)} · ${_esc(b.phone||'')}</div>
+                <div class="admin-booking-detail">${ts}</div>
+              </div>
+              <div class="admin-item-actions">
+                <span class="status-badge status-${b.status}">${b.status==='confirmed'?'已确认':'已取消'}</span>
+                <button class="admin-toggle" onclick="adminToggleCourseBooking('${b.id}','${courseId}')">
+                  ${b.status==='confirmed'?'取消':'恢复'}
+                </button>
+              </div>
+            </div>`;
+        }).join('');
+    el.innerHTML = `
+      <div class="modal-body">
+        <h3 class="modal-title">${_esc(c.emoji)} ${_esc(c.name)}</h3>
+        <div style="color:var(--text2);font-size:0.85rem;margin-bottom:16px">${fmtCourseDate(c.date)} · ${_esc(c.time)} · ${_esc(c.teacher)}</div>
+        <div class="admin-stats" style="margin-bottom:16px">
+          <div class="admin-stat"><div class="admin-stat-num">${bookings.length}</div><div class="admin-stat-lbl">总预约</div></div>
+          <div class="admin-stat"><div class="admin-stat-num">${conf}</div><div class="admin-stat-lbl">已确认</div></div>
+          <div class="admin-stat"><div class="admin-stat-num">${bookings.length-conf}</div><div class="admin-stat-lbl">已取消</div></div>
+        </div>
+        ${rows}
+      </div>`;
+  } catch(e) {
+    el.innerHTML = errorHTML('加载失败，请重试');
+    console.error(e);
+  }
+}
+
+async function adminToggleCourseBooking(id, courseId) {
+  try {
+    const rows = await sbGet(`bookings?id=eq.${id}`);
+    const b = rows[0]; if (!b) return;
+    if (b.status === 'confirmed' && b.card_type === 'credit' && b.card_id) {
+      const cardRows = await sbGet(`course_cards?id=eq.${b.card_id}`);
+      if (cardRows.length) {
+        await sbPatch('course_cards', `id=eq.${b.card_id}`, { remaining_credits: cardRows[0].remaining_credits + 1 });
+      }
+    }
+    await sbPatch('bookings', `id=eq.${id}`, { status: b.status==='confirmed'?'cancelled':'confirmed' });
+    openCourseBookings(courseId);
     renderAdmin();
   } catch(e) {
     showToast('操作失败，请重试'); console.error(e);
@@ -1231,15 +1298,20 @@ async function deleteUser(userId) {
 function adminLogin() {
   const pwd = document.getElementById('admin-pwd').value;
   if (pwd === ADMIN_PASSWORD) {
-    adminLoggedIn = true;
+    adminLoggedIn = true; adminRole = 'admin';
     document.getElementById('admin-pwd').value = '';
     document.getElementById('admin-login-err').style.display = 'none';
     closeModal('adminlogin'); renderAdmin(); showToast('已登录管理员账户');
+  } else if (pwd === COACH_PASSWORD) {
+    adminLoggedIn = true; adminRole = 'coach';
+    document.getElementById('admin-pwd').value = '';
+    document.getElementById('admin-login-err').style.display = 'none';
+    closeModal('adminlogin'); renderAdmin(); showToast('已登录教练账户');
   } else {
     document.getElementById('admin-login-err').style.display = 'block';
   }
 }
-function adminLogout() { adminLoggedIn = false; renderAdmin(); showToast('已退出管理员账户'); }
+function adminLogout() { adminLoggedIn = false; adminRole = 'admin'; renderAdmin(); showToast('已退出'); }
 
 // ===== Modal =====
 function openModal(name)  { document.getElementById(`modal-${name}-bg`).classList.add('open'); }
