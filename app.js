@@ -807,7 +807,11 @@ async function openCourseForm(courseId) {
       <div class="form-group"><label class="form-label">上课日期 *</label>
         <input id="ce-date" class="form-input" type="date" value="${isNew?'':(c.date||'')}"${minDate}></div>
       <div class="form-group"><label class="form-label">上课时间 *</label>
-        <input id="ce-time" class="form-input" type="text" placeholder="如 19:00–20:30" value="${isNew?'':_esc(c.time)}"></div>
+        <div class="time-range-picker">
+          <input id="ce-time-start" class="form-input" type="time" value="${isNew?'':(c.time||'').split(/[–\-]/)[0].trim()}">
+          <span class="time-range-sep">–</span>
+          <input id="ce-time-end" class="form-input" type="time" value="${isNew?'':((c.time||'').split(/[–\-]/)[1]||'').trim()}">
+        </div></div>
       <div class="form-group"><label class="form-label">地点</label>
         <input id="ce-room" class="form-input" type="text" placeholder="如 舞室 A" value="${isNew?'':_esc(c.room)}"></div>
       <div class="form-group"><label class="form-label">容量人数 *</label>
@@ -865,7 +869,9 @@ async function saveCourseForm() {
   const emoji        = document.getElementById('ce-emoji').value.trim() || '🎵';
   const teacher      = document.getElementById('ce-teacher-name').value.trim();
   const date         = document.getElementById('ce-date').value;
-  const time         = document.getElementById('ce-time').value.trim();
+  const timeStart    = document.getElementById('ce-time-start').value;
+  const timeEnd      = document.getElementById('ce-time-end').value;
+  const time         = timeStart && timeEnd ? `${timeStart}–${timeEnd}` : (timeStart || '');
   const room         = document.getElementById('ce-room').value.trim();
   const capacity     = parseInt(document.getElementById('ce-capacity').value, 10);
   const level        = document.getElementById('ce-level').value;
@@ -876,7 +882,7 @@ async function saveCourseForm() {
   if (!name)                     { showErr(errEl,'请填写课程名称'); return; }
   if (!teacher)                  { showErr(errEl,'请填写教练姓名'); return; }
   if (!date)                     { showErr(errEl,'请选择上课日期'); return; }
-  if (!time)                     { showErr(errEl,'请填写上课时间'); return; }
+  if (!timeStart || !timeEnd)    { showErr(errEl,'请选择上课开始和结束时间'); return; }
   if (!capacity || capacity < 1) { showErr(errEl,'请填写有效的容量人数（≥1）'); return; }
   const btn = document.getElementById('ce-save-btn');
   if (btn) { btn.disabled = true; btn.textContent = '保存中…'; }

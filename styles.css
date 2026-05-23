@@ -1283,3 +1283,17 @@ textarea.form-input { resize: vertical; min-height: 80px; line-height: 1.7; }
 .admin-course-row:hover {
   background: rgba(0,0,0,0.03);
 }
+.time-range-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.time-range-picker .form-input {
+  flex: 1;
+  min-width: 0;
+}
+.time-range-sep {
+  color: var(--text2);
+  font-size: 1.1rem;
+  flex-shrink: 0;
+}
