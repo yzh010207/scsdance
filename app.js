@@ -1,6 +1,7 @@
 'use strict';
 
-// ===== Constants =====
+// ===== Constants ===== v2
+
 const WEEKDAYS        = ['周日','周一','周二','周三','周四','周五','周六'];
 const ADMIN_PASSWORD  = 'scs123123';
 const COACH_PASSWORD  = 'woshijiaolian';
