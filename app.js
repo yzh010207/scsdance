@@ -205,6 +205,12 @@ function parseCourseEndTime(dateStr, timeStr) {
   const [y, mo, d] = dateStr.split('-').map(Number);
   return new Date(y, mo - 1, d, +m[1], +m[2], 0);
 }
+function calcDurationMins(timeStr) {
+  const parts = (timeStr || '').split(/[–\-]/);
+  const parse = s => { const [h,m] = (s||'').trim().split(':').map(Number); return (isNaN(h)||isNaN(m)) ? null : h*60+m; };
+  const start = parse(parts[0]), end = parse(parts[1]);
+  return (start != null && end != null && end > start) ? end - start : null;
+}
 function isCourseOver(dateStr, timeStr) {
   const today = todayIso();
   if (dateStr < today) return true;
@@ -429,7 +435,7 @@ async function openCourseDetail(courseId) {
       ${renderVideoPlayer(c.localVideoData, c.videoUrl)}
       <div class="detail-kicker">
         <span class="level-badge level-${c.levelClass}">${c.level}</span>
-        <span class="detail-dur">${c.duration||90} min</span>
+        <span class="detail-dur">${calcDurationMins(c.time) ?? c.duration ?? 90} min</span>
       </div>
       <div class="detail-header">
         <div class="detail-title">${_esc(c.name)}</div>
@@ -893,7 +899,7 @@ async function saveCourseForm() {
     if (_editingCourseId == null) {
       await sbPost('courses', {
         name, emoji, teacher, date, time, room: room||'', capacity,
-        level, level_class: levelClass, duration: 90,
+        level, level_class: levelClass, duration: calcDurationMins(time) ?? 90,
         description: description||'', requirements: '',
         teacher_intro: teacherIntro||'', video_url: videoUrl||'',
         color: COURSE_COLORS[Math.floor(Math.random()*COURSE_COLORS.length)]
