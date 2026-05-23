@@ -1345,7 +1345,12 @@ function adminLogout() { adminLoggedIn = false; adminRole = 'admin'; renderAdmin
 
 // ===== Modal =====
 function openModal(name)  { document.getElementById(`modal-${name}-bg`).classList.add('open'); }
-function closeModal(name) { document.getElementById(`modal-${name}-bg`).classList.remove('open'); }
+function closeModal(name) {
+  const bg = document.getElementById(`modal-${name}-bg`);
+  bg.querySelectorAll('video').forEach(v => v.pause());
+  bg.querySelectorAll('iframe').forEach(f => { f.src = f.src; });
+  bg.classList.remove('open');
+}
 
 // ===== QR Code =====
 function initQRCode() {
