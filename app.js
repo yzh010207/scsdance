@@ -156,6 +156,7 @@ let adminBookingFilter = '';
 let mineTab            = 'bookings';
 let _editingCourseId   = null;
 let _pendingBookingId  = null;
+let _cardUsers         = [];
 
 // ===== Session (localStorage only — no course/card/booking data) =====
 function getSession()        { const r = localStorage.getItem('scs_session'); return r ? JSON.parse(r) : null; }
@@ -1143,7 +1144,7 @@ async function renderAdminCardsHTML() {
         <span>课卡管理（${cards.length}）</span>
         <div style="display:flex;gap:8px">
           <button class="btn-add" onclick="openBulkCardModal()">批量发放</button>
-          <button class="btn-add" onclick="openCardModal('')">+ 新建</button>
+          <button class="btn-add" onclick="openCardModal('')">+ 发卡</button>
         </div>
       </div>
       ${rows}
@@ -1152,22 +1153,32 @@ async function renderAdminCardsHTML() {
 
 async function openCardModal(cardId) {
   let card = null, existingUser = null;
-  if (cardId) {
-    try {
-      const rows = await sbGet(`course_cards?id=eq.${cardId}`);
-      if (rows.length) { card = rowToCard(rows[0]); existingUser = await fetchUserByPhone(card.phone); }
-    } catch(e) { console.error(e); }
-  }
+  [_cardUsers] = await Promise.all([
+    fetchUsers(),
+    (async () => {
+      if (cardId) {
+        try {
+          const rows = await sbGet(`course_cards?id=eq.${cardId}`);
+          if (rows.length) { card = rowToCard(rows[0]); existingUser = await fetchUserByPhone(card.phone); }
+        } catch(e) { console.error(e); }
+      }
+    })()
+  ]);
   const isPeriod = !card || card.type === 'period';
   document.getElementById('modal-card-body').innerHTML = `
     <div class="modal-body">
-      <h3 class="modal-title">${card ? '编辑课卡' : '新建课卡'}</h3>
+      <h3 class="modal-title">${card ? '编辑课卡' : '发卡'}</h3>
       <div class="form-group">
-        <label class="form-label">用户手机号</label>
-        <input id="cd-phone" class="form-input" type="tel" placeholder="请输入手机号"
-          value="${card ? card.phone : ''}" ${card ? 'readonly' : ''}
-          oninput="lookupUserForCard(this.value)">
-        <div id="cd-user-lookup" style="margin-top:6px">
+        <label class="form-label">用户手机号或姓名</label>
+        <div style="position:relative">
+          <input id="cd-phone" class="form-input" type="text" placeholder="输入手机号或姓名搜索"
+            value="${card ? card.phone : ''}" ${card ? 'readonly' : ''}
+            oninput="filterUsersForCard(this.value)"
+            onblur="setTimeout(hideCardSuggestions,150)"
+            autocomplete="off">
+          <div id="cd-suggest-list"></div>
+        </div>
+        <div id="cd-user-lookup" style="margin-top:4px">
           ${existingUser ? `<span class="user-found">✓ 用户：${_esc(existingUser.name||existingUser.phone)}</span>` : ''}
         </div>
       </div>
@@ -1196,16 +1207,38 @@ async function openCardModal(cardId) {
   openModal('card');
 }
 
-async function lookupUserForCard(phone) {
+function filterUsersForCard(val) {
+  const suggestEl = document.getElementById('cd-suggest-list');
+  const lookupEl  = document.getElementById('cd-user-lookup');
+  if (!suggestEl) return;
+  val = val.trim();
+  if (!val) { suggestEl.innerHTML = ''; if (lookupEl) lookupEl.innerHTML = ''; return; }
+  const matches = _cardUsers.filter(u =>
+    u.phone.includes(val) || (u.name && u.name.toLowerCase().includes(val.toLowerCase()))
+  ).slice(0, 6);
+  if (!matches.length) {
+    suggestEl.innerHTML = '';
+    if (lookupEl) lookupEl.innerHTML = val.length >= 11
+      ? '<span class="user-not-found">该手机号未注册，保存时将自动创建用户账户</span>'
+      : '';
+    return;
+  }
+  suggestEl.innerHTML = matches.map(u => `
+    <div class="user-suggest-item" onmousedown="selectCardUser('${_esc(u.phone)}','${_esc(u.name)}')">
+      <span class="suggest-name">${_esc(u.name || u.phone)}</span>
+      <span class="suggest-phone">${_esc(u.phone)}</span>
+    </div>`).join('');
+}
+function selectCardUser(phone, name) {
+  const inp = document.getElementById('cd-phone');
+  if (inp) inp.value = phone;
+  hideCardSuggestions();
   const el = document.getElementById('cd-user-lookup');
-  if (!el) return;
-  if (!phone || phone.length < 11) { el.innerHTML = ''; return; }
-  try {
-    const user = await fetchUserByPhone(phone);
-    el.innerHTML = user
-      ? `<span class="user-found">✓ 用户：${_esc(user.name||user.phone)}</span>`
-      : `<span class="user-not-found">该手机号未注册，保存时将自动创建用户账户</span>`;
-  } catch(e) { el.innerHTML = ''; }
+  if (el) el.innerHTML = `<span class="user-found">✓ 用户：${_esc(name || phone)}</span>`;
+}
+function hideCardSuggestions() {
+  const el = document.getElementById('cd-suggest-list');
+  if (el) el.innerHTML = '';
 }
 
 function toggleCardTypeFields() {
@@ -1249,7 +1282,7 @@ async function saveCard(cardId) {
     }
     closeModal('card');
     renderAdmin();
-    showToast(cardId ? '课卡已更新' : '课卡已创建');
+    showToast(cardId ? '课卡已更新' : '课卡已发放');
   } catch(e) {
     if (btn) { btn.disabled = false; btn.textContent = '保存课卡'; }
     showErr(errEl, '保存失败，请重试');
