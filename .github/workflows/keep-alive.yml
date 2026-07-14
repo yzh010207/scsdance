@@ -9,14 +9,11 @@ jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping Supabase
+      - name: Restore Supabase Project
         run: |
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            -H "apikey: ${{ secrets.SUPABASE_KEY }}" \
-            -H "Authorization: Bearer ${{ secrets.SUPABASE_KEY }}" \
-            "https://iodfxczhadjoarnobazq.supabase.co/rest/v1/courses?limit=1")
-          echo "Supabase response: $STATUS"
-          if [ "$STATUS" != "200" ]; then
-            echo "Warning: unexpected status $STATUS"
-            exit 1
-          fi
+            -X POST \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_ACCESS_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            "https://api.supabase.com/v1/projects/iodfxczhadjoarnobazq/restore")
+          echo "Restore response: $STATUS"
