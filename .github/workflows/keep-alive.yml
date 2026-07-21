@@ -11,9 +11,17 @@ jobs:
     steps:
       - name: Restore Supabase Project
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            -X POST \
+          curl -s -X POST \
             -H "Authorization: Bearer ${{ secrets.SUPABASE_ACCESS_TOKEN }}" \
             -H "Content-Type: application/json" \
-            "https://api.supabase.com/v1/projects/iodfxczhadjoarnobazq/restore")
-          echo "Restore response: $STATUS"
+            "https://api.supabase.com/v1/projects/iodfxczhadjoarnobazq/restore"
+          echo "Restore called, waiting for project to wake up..."
+          sleep 15
+
+      - name: Reset Activity Timer
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "apikey: ${{ secrets.SUPABASE_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_KEY }}" \
+            "https://iodfxczhadjoarnobazq.supabase.co/rest/v1/courses?limit=1")
+          echo "DB query response: $STATUS"
